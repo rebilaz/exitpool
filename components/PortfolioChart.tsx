@@ -1,11 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
 
 // --- Données mockées (remplace plus tard par les vraies) ---
-const portfolioData = [
+const fullData = [
   { name: 'Jan', value: 12000 },
   { name: 'Feb', value: 15000 },
   { name: 'Mar', value: 13500 },
@@ -19,6 +19,8 @@ const portfolioData = [
   { name: 'Nov', value: 26500 },
   { name: 'Dec', value: 32000 },
 ];
+
+export type ChartRange = '1D' | '1W' | '1M' | 'YTD' | '1Y';
 
 // --- Utilitaires formatage ---
 const fmtCurrency = (n: number) =>
@@ -42,8 +44,26 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-const PortfolioChart: React.FC = () => {
-  // KPIs dérivés
+interface PortfolioChartProps { range: ChartRange; }
+
+const PortfolioChart: React.FC<PortfolioChartProps> = ({ range }) => {
+  const portfolioData = useMemo(() => {
+    switch (range) {
+      case '1D':
+        return Array.from({ length: 24 }, (_, i) => ({ name: `${i}h`, value: 30000 + Math.sin(i / 2) * 500 + i * 5 }));
+      case '1W':
+        return Array.from({ length: 7 }, (_, i) => ({ name: ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'][i], value: 28000 + i * 300 + Math.sin(i) * 400 }));
+      case '1M':
+        return Array.from({ length: 30 }, (_, i) => ({ name: `${i+1}`, value: 25000 + i * 120 + Math.sin(i/3) * 600 }));
+      case 'YTD':
+        // Use partial months assuming current month = Aug for mock
+        return fullData.slice(0, 8);
+      case '1Y':
+      default:
+        return fullData;
+    }
+  }, [range]);
+
   const last = portfolioData.at(-1)?.value ?? 0;
   const prev = portfolioData.at(-2)?.value ?? last;
   const first = portfolioData[0]?.value ?? last;
@@ -57,19 +77,15 @@ const PortfolioChart: React.FC = () => {
       transition={{ duration: 0.45, ease: 'easeOut' }}
       className="w-full rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
     >
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-900">Portfolio Value</h2>
-        <span className={`text-xs font-medium ${deltaColor}`}>{deltaPct >= 0 ? '+' : ''}{deltaPct.toFixed(2)}%</span>
-      </div>
-      <div className="mb-2 text-2xl font-semibold text-gray-900">{fmtCurrency(last)}</div>
-      <div className="mb-4 text-xs text-gray-500">Powered by CryptoPilot</div>
+  <div className="mb-1 text-2xl font-semibold text-gray-900">{fmtCurrency(last)}</div>
+  <div className="mb-3 text-xs text-gray-500 flex items-center gap-2"><span className={`font-medium ${deltaColor}`}>{deltaPct >= 0 ? '+' : ''}{deltaPct.toFixed(2)}%</span><span className="text-gray-300">•</span>{range} performance</div>
       <div className="w-full h-[320px]">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={portfolioData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#0A84FF" stopOpacity={0.10} />
-                <stop offset="100%" stopColor="#0A84FF" stopOpacity={0.01} />
+                <stop offset="100%" stopColor="#4F9BFF" stopOpacity={0.01} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />

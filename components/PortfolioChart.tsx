@@ -1,0 +1,88 @@
+'use client';
+
+import React from 'react';
+import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { motion } from 'framer-motion';
+
+// --- Données mockées (remplace plus tard par les vraies) ---
+const portfolioData = [
+  { name: 'Jan', value: 12000 },
+  { name: 'Feb', value: 15000 },
+  { name: 'Mar', value: 13500 },
+  { name: 'Apr', value: 18000 },
+  { name: 'May', value: 16500 },
+  { name: 'Jun', value: 22000 },
+  { name: 'Jul', value: 20000 },
+  { name: 'Aug', value: 25000 },
+  { name: 'Sep', value: 23500 },
+  { name: 'Oct', value: 28000 },
+  { name: 'Nov', value: 26500 },
+  { name: 'Dec', value: 32000 },
+];
+
+// --- Utilitaires formatage ---
+const fmtCurrency = (n: number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+
+const fmtShort = (n: number) => {
+  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(0)}k`;
+  return `$${n}`;
+};
+
+// Tooltip sobre / compact
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  const v = payload[0].value as number;
+  return (
+    <div className="rounded-md bg-white px-2.5 py-2 text-xs shadow-sm border border-gray-200">
+      <p className="mb-0.5 text-[10px] font-medium tracking-wide text-gray-500">{label}</p>
+      <p className="font-semibold text-gray-900">{fmtCurrency(v)}</p>
+    </div>
+  );
+};
+
+const PortfolioChart: React.FC = () => {
+  // KPIs dérivés
+  const last = portfolioData.at(-1)?.value ?? 0;
+  const prev = portfolioData.at(-2)?.value ?? last;
+  const first = portfolioData[0]?.value ?? last;
+  const deltaPct = prev ? ((last - prev) / prev) * 100 : 0;
+  const deltaColor = deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.45, ease: 'easeOut' }}
+      className="w-full rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-900">Portfolio Value</h2>
+        <span className={`text-xs font-medium ${deltaColor}`}>{deltaPct >= 0 ? '+' : ''}{deltaPct.toFixed(2)}%</span>
+      </div>
+      <div className="mb-2 text-2xl font-semibold text-gray-900">{fmtCurrency(last)}</div>
+      <div className="mb-4 text-xs text-gray-500">Powered by CryptoPilot</div>
+      <div className="w-full h-[320px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={portfolioData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#0A84FF" stopOpacity={0.10} />
+                <stop offset="100%" stopColor="#0A84FF" stopOpacity={0.01} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#6B7280' }} dy={6} />
+            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v: number) => fmtShort(v)} width={50} />
+            <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#0A84FF', strokeWidth: 1, strokeDasharray: '4 4' }} wrapperStyle={{ outline: 'none' }} />
+            <Area type="monotone" dataKey="value" stroke="none" fill="url(#areaGradient)" fillOpacity={1} />
+            <Line type="monotone" dataKey="value" stroke="#0A84FF" strokeWidth={2} dot={false} activeDot={{ r: 5, fill: '#0A84FF', stroke: '#fff', strokeWidth: 2 }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </motion.div>
+  );
+};
+
+export default PortfolioChart;

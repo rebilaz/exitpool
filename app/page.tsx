@@ -10,21 +10,25 @@ import PriceStatus from "../components/PriceStatus";
 import RefreshSettings from "../components/RefreshSettings";
 import { SymbolAutocomplete } from "../components/SymbolAutocomplete";
 import { usePrices } from "../hooks/usePrices";
+import { useCurrentPortfolio, useAddTransaction } from "../hooks/usePortfolio";
 
 export default function Home() {
-  // Mock assets state (could be lifted further or persisted later)
-  const [assets, setAssets] = useState<PortfolioAsset[]>([
-    { id: '1', symbol: 'BTC', name: 'Bitcoin', quantity: 0.42, price: 62000 },
-    { id: '2', symbol: 'ETH', name: 'Ethereum', quantity: 5, price: 3200 },
-    { id: '3', symbol: 'SOL', name: 'Solana', quantity: 50, price: 170 },
-  ]);
-  const [showAdd, setShowAdd] = useState(false);
-  const [range, setRange] = useState<ChartRange>('1Y');
-  const [refreshInterval, setRefreshInterval] = useState(30000); // 30 secondes par défaut
+  // Utiliser l'user_id réel qui a des transactions
+  const userId = '0181b8c0-0b0a-7000-8000-000000000000'; // User ID réel avec des données
+  
+  // Récupérer le vrai portfolio depuis BigQuery
+  const { 
+    data: currentPortfolio, 
+    isLoading: portfolioLoading, 
+    error: portfolioError,
+    refetch: refetchPortfolio
+  } = useCurrentPortfolio(userId);
 
-  // Debug: log initial
-  // Hook pour récupérer les prix en temps réel
-  const symbols = useMemo(() => assets.map(asset => asset.symbol), [assets]);
+  // Hook pour récupérer les prix en temps réel avec l'ancien système
+  const symbols = useMemo(() => {
+    if (!currentPortfolio?.assets) return [];
+    return currentPortfolio.assets.map(asset => asset.symbol);
+  }, [currentPortfolio]);
   
   const { prices, loading, error, lastUpdated, refresh } = usePrices({ 
     symbols,
@@ -32,83 +36,89 @@ export default function Home() {
     enabled: true 
   });
 
-  // Mise à jour des prix des assets quand on reçoit de nouveaux prix
-  useEffect(() => {
-    if (Object.keys(prices).length > 0) {
-      setAssets(currentAssets => 
-        currentAssets.map(asset => {
-          const newPrice = prices[asset.symbol];
-          if (newPrice && newPrice !== asset.price) {
-            return { ...asset, price: newPrice };
-          }
-          return asset;
-        })
-      );
+  // Convertir les données du portfolio en format compatible avec PortfolioMain
+  const assets: PortfolioAsset[] = useMemo(() => {
+    if (!currentPortfolio?.assets) return [];
+    
+    return currentPortfolio.assets.map((asset, index) => ({
+      id: `${asset.symbol}-${index}`,
+      symbol: asset.symbol,
+      name: asset.symbol, // On pourrait enrichir avec les vrais noms plus tard
+      quantity: asset.quantity,
+      price: prices[asset.symbol] || asset.currentPrice || 0, // Utiliser les prix de l'ancien système en priorité
+      avgPrice: asset.avgPrice // Prix moyen depuis BigQuery
+    }));
+  }, [currentPortfolio, prices]); // Ajouter prices dans les dépendances
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [range, setRange] = useState<ChartRange>('1Y');
+  const [refreshInterval, setRefreshInterval] = useState(30000); // 30 secondes par défaut
+
+  // Utiliser les valeurs du vrai portfolio ou valeurs par défaut si pas de données
+  const totalValue = useMemo(() => {
+    if (currentPortfolio) {
+      return currentPortfolio.totalValue;
     }
-  }, [prices]);
+    return assets.reduce((acc, a) => acc + a.quantity * a.price, 0);
+  }, [currentPortfolio, assets]);
 
-  const totalValue = useMemo(() => assets.reduce((acc, a) => acc + a.quantity * a.price, 0), [assets]);
-  // Simple mock deltas
-  const pnl24h = Math.round(totalValue * 0.012); // +1.2% assume
-  const pnlYTD = Math.round(totalValue * 0.18); // +18% assume
+  const pnl24h = currentPortfolio?.totalPnl || 0;
+  const pnlYTD = currentPortfolio?.totalPnl || 0; // On pourrait calculer le YTD différemment
 
-  const removeAsset = (id: string) => setAssets(a => a.filter(x => x.id !== id));
+  // Hook pour ajouter des transactions
+  const addTransactionMutation = useAddTransaction();
+
+  // Plus besoin de removeAsset car on ne peut plus supprimer arbitrairement des assets réels
 
   // Simple input states for adding a transaction/position
   const [symbol, setSymbol] = useState('');
   const [qty, setQty] = useState('');
   const [price, setPrice] = useState('');
   const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]);
+  const [side, setSide] = useState<'BUY' | 'SELL'>('BUY'); // Nouveau state pour le type de transaction
+  const [isAdding, setIsAdding] = useState(false);
+  const [addStatus, setAddStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   const addPosition = async () => {
     if (!symbol || !qty) return;
     const s = symbol.toUpperCase();
     const q = parseFloat(qty);
-    if (Number.isNaN(q)) return;
+    if (Number.isNaN(q) || q === 0) return;
+
+    setIsAdding(true);
+    setAddStatus('idle');
 
     try {
-      // Utiliser l'API réelle pour ajouter la transaction
-      const transactionData = {
-        userId: 'test-user-123', // User ID temporaire
+      await addTransactionMutation.mutateAsync({
+        userId,
         symbol: s,
-        quantity: q,
+        quantity: q, // On garde la valeur telle quelle (positive ou négative)
         price: price ? parseFloat(price) : undefined,
-        side: 'BUY',
+        side: side, // Utilise le side sélectionné
         note: 'Ajouté depuis la page d\'accueil',
         timestamp: transactionDate ? new Date(transactionDate + 'T12:00:00').toISOString() : undefined
-      };
-
-      const response = await fetch('/api/transactions/add', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(transactionData),
       });
 
-      const result = await response.json();
+      setAddStatus('success');
+      // Rafraîchir le portfolio après l'ajout
+      refetchPortfolio();
       
-      if (result.success) {
-        // Réinitialiser le formulaire
+      // Réinitialiser le formulaire après un délai
+      setTimeout(() => {
         setSymbol(''); 
         setQty(''); 
         setPrice(''); 
         setTransactionDate(new Date().toISOString().split('T')[0]);
+        setSide('BUY'); // Reset à BUY
         setShowAdd(false);
-        
-        // Afficher un message de succès
-        alert('Transaction ajoutée avec succès !');
-        
-        // Note: Pour une vraie app, on pourrait aussi invalider les caches React Query ici
-        // et/ou déclencher un refresh des données du portfolio
-        
-      } else {
-        alert('Erreur lors de l\'ajout de la transaction: ' + result.error);
-      }
+        setAddStatus('idle');
+      }, 1500);
       
     } catch (error) {
+      setAddStatus('error');
       console.error('Erreur lors de l\'ajout de la transaction:', error);
-      alert('Erreur lors de l\'ajout de la transaction');
+    } finally {
+      setIsAdding(false);
     }
   };
 
@@ -135,60 +145,58 @@ export default function Home() {
           <ValueHero totalValue={totalValue} pnl24h={pnl24h} pnlYTD={pnlYTD} assetsCount={assets.length} />
         </div>
 
-        {/* Portfolio & Chart sections */}
-        <div className="grid grid-cols-12 gap-6">
-          {/* Portfolio first */}
-            <section className="col-span-12 xl:col-span-6 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <div className="flex flex-col gap-1">
-                  <h2 className="text-sm font-semibold text-gray-900">Portefeuille</h2>
-                  <div className="flex items-center gap-4">
-                    <PriceStatus 
-                      loading={loading}
-                      error={error}
-                      lastUpdated={lastUpdated}
-                      onRefresh={refresh}
-                    />
-                    <RefreshSettings
-                      currentInterval={refreshInterval}
-                      onIntervalChange={setRefreshInterval}
-                      loading={loading}
-                    />
-                    {/* Debug: affichage des prix bruts */}
-                    {Object.keys(prices).length > 0 && (
-                      <div className="text-[10px] text-blue-600 max-w-40 truncate" title={JSON.stringify(prices)}>
-                        Debug: {Object.keys(prices).length} prix
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-[11px] font-medium text-gray-700 shadow-sm hover:bg-gray-50">Importer</button>
-                  <button onClick={() => setShowAdd(true)} className="rounded-md bg-gray-900 px-3 py-1.5 text-[11px] font-medium text-white shadow-sm hover:bg-gray-800">Nouvelle position</button>
-                </div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                <PortfolioMain 
-                  assets={assets} 
-                  onRemove={removeAsset} 
-                  pricesLoading={loading}
-                  lastPriceUpdate={lastUpdated}
+        {/* Portfolio en grand */}
+        <section className="col-span-12 flex flex-col gap-4 mb-8">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-lg font-bold text-gray-900">Portefeuille</h2>
+              <div className="flex items-center gap-4">
+                <PriceStatus 
+                  loading={loading}
+                  error={error}
+                  lastUpdated={lastUpdated}
+                  onRefresh={refresh}
                 />
+                <RefreshSettings
+                  currentInterval={refreshInterval}
+                  onIntervalChange={setRefreshInterval}
+                  loading={loading}
+                />
+                {Object.keys(prices).length > 0 && (
+                  <div className="text-[10px] text-blue-600 max-w-40 truncate" title={JSON.stringify(prices)}>
+                    Debug: {Object.keys(prices).length} prix
+                  </div>
+                )}
               </div>
-            </section>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-[11px] font-medium text-gray-700 shadow-sm hover:bg-gray-50">Importer</button>
+              <button onClick={() => setShowAdd(true)} className="rounded-md bg-gray-900 px-3 py-1.5 text-[11px] font-medium text-white shadow-sm hover:bg-gray-800">Nouvelle position</button>
+            </div>
+          </div>
+          <div className="rounded-2xl border-2 border-gray-200 bg-white p-6 shadow-lg">
+            <PortfolioMain 
+              assets={assets} 
+              onRemove={() => {}} 
+              pricesLoading={loading || portfolioLoading}
+              lastPriceUpdate={lastUpdated}
+            />
+          </div>
+        </section>
 
-            {/* Chart second */}
-            <section className="col-span-12 xl:col-span-6 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <div className="flex flex-col">
-                  <h2 className="text-sm font-semibold text-gray-900">Portfolio Value</h2>
-                  <span className="text-[11px] text-gray-500">Powered by CryptoPilot</span>
-                </div>
-                <TimeRangeTabs value={range as TimeRange} onChange={r => setRange(r as ChartRange)} />
-              </div>
-              <PortfolioChart range={range} userId="test-user-123" />
-            </section>
-        </div>
+        {/* Chart en grand */}
+        <section className="col-span-12 flex flex-col gap-4 mb-8">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col">
+              <h2 className="text-lg font-bold text-gray-900">Évolution du portefeuille</h2>
+              <span className="text-[12px] text-gray-500">Powered by CryptoPilot</span>
+            </div>
+            <TimeRangeTabs value={range as TimeRange} onChange={r => setRange(r as ChartRange)} />
+          </div>
+          <div className="rounded-2xl border-2 border-gray-200 bg-white p-6 shadow-lg">
+            <PortfolioChart range={range} userId="0181b8c0-0b0a-7000-8000-000000000000" />
+          </div>
+        </section>
       </div>
 
       {/* Add transaction panel (modal style w/ translucent backdrop) */}
@@ -222,7 +230,7 @@ export default function Home() {
                     type="number" 
                     value={qty} 
                     onChange={e => setQty(e.target.value)} 
-                    placeholder="0.5" 
+                    placeholder="0.5 (négatif pour vente)" 
                     className="w-full border border-gray-300 rounded-lg p-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" 
                   />
                 </div>
@@ -239,6 +247,37 @@ export default function Home() {
                   />
                 </div>
               </div>
+              
+              {/* Toggle BUY/SELL */}
+              <div className="flex flex-col gap-2">
+                <label className="block text-xs font-medium text-gray-700">
+                  Type de transaction
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSide('BUY')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all duration-200 ${
+                      side === 'BUY'
+                        ? 'bg-green-50 text-green-700 border border-green-200 shadow-sm'
+                        : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                    }`}
+                  >
+                    ACHAT
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSide('SELL')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all duration-200 ${
+                      side === 'SELL'
+                        ? 'bg-red-50 text-red-700 border border-red-200 shadow-sm'
+                        : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                    }`}
+                  >
+                    VENTE
+                  </button>
+                </div>
+              </div>
               <div className="flex flex-col gap-2">
                 <label className="block text-xs font-medium text-gray-700">
                   Date de la transaction
@@ -252,21 +291,46 @@ export default function Home() {
                 />
               </div>
               <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded-md">
-                💡 Cette transaction sera ajoutée à votre portefeuille BigQuery. Si aucun prix n'est spécifié, le prix actuel du marché sera utilisé. Pour les dates dans le passé, l'historique sera recalculé automatiquement.
+                💡 <strong>ACHAT</strong> : Quantité positive (ex: 0.5) ou négative (ex: -0.5)<br/>
+                💡 <strong>VENTE</strong> : Quantité positive (ex: 0.5) ou négative (ex: -0.5)<br/>
+                Si aucun prix n'est spécifié, le prix actuel du marché sera utilisé. Pour les dates dans le passé, l'historique sera recalculé automatiquement.
               </div>
+              
+              {/* Status feedback */}
+              {addStatus === 'success' && (
+                <div className="text-xs text-green-700 bg-green-50 border border-green-200 p-3 rounded-md flex items-center gap-2">
+                  <span className="text-green-500">✓</span>
+                  Transaction ajoutée avec succès !
+                </div>
+              )}
+              
+              {addStatus === 'error' && (
+                <div className="text-xs text-red-700 bg-red-50 border border-red-200 p-3 rounded-md flex items-center gap-2">
+                  <span className="text-red-500">✗</span>
+                  Erreur lors de l'ajout de la transaction. Veuillez réessayer.
+                </div>
+              )}
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <button 
                 onClick={() => setShowAdd(false)} 
                 className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                disabled={isAdding}
               >
                 Annuler
               </button>
               <button 
                 onClick={addPosition} 
-                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+                disabled={isAdding || !symbol || !qty}
+                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
-                Ajouter
+                {isAdding && (
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                )}
+                {isAdding ? 'Ajout en cours...' : 'Ajouter'}
               </button>
             </div>
           </div>

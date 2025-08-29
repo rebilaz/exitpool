@@ -8,6 +8,7 @@ export interface PortfolioAsset {
   name: string;
   quantity: number;
   price: number;
+  avgPrice?: number; // Prix moyen d'achat
 }
 
 interface PortfolioMainProps {
@@ -80,6 +81,7 @@ export default function PortfolioMain({ assets, onRemove, pricesLoading, lastPri
               <th className="px-3 py-2 font-medium">Actif</th>
               <th className="px-3 py-2 font-medium">Qté</th>
               <th className="px-3 py-2 font-medium">Prix</th>
+              <th className="px-3 py-2 font-medium">Prix Moy.</th>
               <th className="px-3 py-2 font-medium">Valeur</th>
               <th className="px-3 py-2 font-medium">Poids</th>
               <th className="px-3 py-2 font-medium">Action</th>
@@ -104,6 +106,9 @@ export default function PortfolioMain({ assets, onRemove, pricesLoading, lastPri
                         <div className="animate-spin h-2 w-2 border border-gray-400 border-t-transparent rounded-full" />
                       )}
                     </div>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-600">
+                    {a.avgPrice ? fmtCurrency(a.avgPrice) : '-'}
                   </td>
                   <td className="px-3 py-2 text-xs font-medium text-gray-900">{fmtCurrency(val)}</td>
                   <td className="px-3 py-2 text-xs text-gray-700">{Math.round(weight(a))}%</td>

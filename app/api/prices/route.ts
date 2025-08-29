@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { getPricesForSymbols } from '../../../lib/services/pricingService';
+import { pricingCentralService } from '../../../lib/services/pricingCentralService';
 import logger from '../../../lib/logger';
 
 export const runtime = 'nodejs';
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   }
   log.info('prices request', { count: symbols.length });
   try {
-    const prices = await getPricesForSymbols(symbols, rid);
+    const prices = await pricingCentralService.getCurrentPrices(symbols);
     return new Response(JSON.stringify({ success: true, prices }), { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 's-maxage=30, stale-while-revalidate=60' } });
   } catch (e) {
     log.error('prices failure', { error: (e as Error).message });

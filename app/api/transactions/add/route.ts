@@ -29,10 +29,10 @@ export async function POST(request: NextRequest) {
     }
     
     // Validation de la quantity
-    if (typeof quantity !== 'number' || quantity <= 0) {
+    if (typeof quantity !== 'number' || quantity === 0) {
       return NextResponse.json({
         success: false,
-        error: 'Quantity must be a positive number'
+        error: 'Quantity must be a non-zero number'
       }, { status: 400 });
     }
     
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     
     const transactionId = await portfolioService.addTransaction(userId, {
       symbol: symbol.toUpperCase(),
-      quantity: Math.abs(quantity), // Garder toujours positif, le side gère la direction
+      quantity: quantity, // Garde la valeur telle quelle (positive ou négative)
       price,
       side,
       note,

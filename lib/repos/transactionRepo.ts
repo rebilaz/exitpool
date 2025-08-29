@@ -308,7 +308,10 @@ export class TransactionRepo {
             WHEN t.side = 'SELL' THEN -t.quantity 
             ELSE 0 
           END) as quantity,
-          AVG(CASE WHEN t.side IN ('BUY', 'SELL') THEN t.price ELSE NULL END) as avg_price
+          SAFE_DIVIDE(
+            SUM(CASE WHEN t.side = 'BUY' THEN t.quantity * t.price ELSE 0 END),
+            SUM(CASE WHEN t.side = 'BUY' THEN t.quantity ELSE 0 END)
+          ) as avg_price
         FROM date_range dr
         LEFT JOIN \`${config.projectId}.${this.dataset}.transactions\` t
           ON DATE(t.timestamp) <= dr.date 
@@ -441,7 +444,10 @@ export class TransactionRepo {
       SELECT 
         symbol,
         SUM(CASE WHEN side = 'BUY' THEN quantity WHEN side = 'SELL' THEN -quantity ELSE 0 END) as total_quantity,
-        AVG(CASE WHEN side IN ('BUY', 'SELL') THEN price ELSE NULL END) as avg_price
+        SAFE_DIVIDE(
+          SUM(CASE WHEN side = 'BUY' THEN quantity * price ELSE 0 END),
+          SUM(CASE WHEN side = 'BUY' THEN quantity ELSE 0 END)
+        ) as avg_price
       FROM \`${config.projectId}.${this.dataset}.transactions\`
       WHERE user_id = @userId
       GROUP BY symbol

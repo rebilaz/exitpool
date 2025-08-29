@@ -3,6 +3,9 @@
 import React, { useMemo } from 'react';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
+import { usePortfolioHistory } from '../hooks/usePortfolio';
+import { format } from 'date-fns';
+import { fr } from 'date-fns/locale';
 
 // --- Données mockées (remplace plus tard par les vraies) ---
 const fullData = [
@@ -21,6 +24,21 @@ const fullData = [
 ];
 
 export type ChartRange = '1D' | '1W' | '1M' | 'YTD' | '1Y';
+
+// Fonction pour mapper les ranges du composant vers celles de l'API
+const mapRangeToAPI = (range: ChartRange): '7d' | '30d' | '1y' => {
+  switch (range) {
+    case '1D':
+    case '1W':
+      return '7d';
+    case '1M':
+      return '30d';
+    case 'YTD':
+    case '1Y':
+    default:
+      return '1y';
+  }
+};
 
 // --- Utilitaires formatage ---
 const fmtCurrency = (n: number) =>
@@ -44,10 +62,64 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-interface PortfolioChartProps { range: ChartRange; }
+interface PortfolioChartProps { 
+  range: ChartRange; 
+  userId?: string; // Rendre userId optionnel avec une valeur par défaut
+}
 
-const PortfolioChart: React.FC<PortfolioChartProps> = ({ range }) => {
+const PortfolioChart: React.FC<PortfolioChartProps> = ({ range, userId = "test-user-123" }) => {
+  // Utiliser les vraies données du portefeuille
+  const apiRange = mapRangeToAPI(range);
+  const { data: portfolioHistory, isLoading, error } = usePortfolioHistory(userId, apiRange);
+
   const portfolioData = useMemo(() => {
+    // Si on a des vraies données, les utiliser
+    if (portfolioHistory?.points && portfolioHistory.points.length > 0) {
+      return portfolioHistory.points.map(point => {
+        const date = new Date(point.date);
+        let name: string;
+        
+        // Formatter la date selon le range
+        switch (range) {
+          case '1D':
+            name = format(date, 'HH:mm', { locale: fr });
+            break;
+          case '1W':
+            name = format(date, 'EEE', { locale: fr });
+            break;
+          case '1M':
+            name = format(date, 'd', { locale: fr });
+            break;
+          case 'YTD':
+          case '1Y':
+            name = format(date, 'MMM', { locale: fr });
+            break;
+          default:
+            name = format(date, 'MMM', { locale: fr });
+        }
+        
+        return {
+          name,
+          value: point.totalValue
+        };
+      });
+    }
+
+    // Sinon, fallback vers les données mockées comme avant
+    const fullData = [
+      { name: 'Jan', value: 12000 },
+      { name: 'Feb', value: 15000 },
+      { name: 'Mar', value: 13500 },
+      { name: 'Apr', value: 18000 },
+      { name: 'May', value: 16500 },
+      { name: 'Jun', value: 22000 },
+      { name: 'Jul', value: 20000 },
+      { name: 'Aug', value: 25000 },
+      { name: 'Sep', value: 23500 },
+      { name: 'Oct', value: 28000 },
+      { name: 'Nov', value: 26500 },
+      { name: 'Dec', value: 32000 },
+    ];
     switch (range) {
       case '1D':
         return Array.from({ length: 24 }, (_, i) => ({ name: `${i}h`, value: 30000 + Math.sin(i / 2) * 500 + i * 5 }));
@@ -62,13 +134,34 @@ const PortfolioChart: React.FC<PortfolioChartProps> = ({ range }) => {
       default:
         return fullData;
     }
-  }, [range]);
+  }, [range, portfolioHistory]);
 
   const last = portfolioData.at(-1)?.value ?? 0;
   const prev = portfolioData.at(-2)?.value ?? last;
   const first = portfolioData[0]?.value ?? last;
   const deltaPct = prev ? ((last - prev) / prev) * 100 : 0;
   const deltaColor = deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600';
+
+  // Gestion des états de chargement et d'erreur
+  if (isLoading) {
+    return (
+      <div className="w-full rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-center h-[320px]">
+          <div className="text-gray-500">Chargement du graphique...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="w-full rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-center h-[320px]">
+          <div className="text-red-500">Erreur lors du chargement des données</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <motion.div

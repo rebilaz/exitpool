@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
-    "start": "next start"
+    "start": "next start",
+    "test:portfolio": "tsx scripts/test-portfolio.ts"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",
+    "@tanstack/react-query": "^5.85.5",
     "date-fns": "^4.1.0",
     "framer-motion": "^11.0.0",
     "next": "15.5.2",

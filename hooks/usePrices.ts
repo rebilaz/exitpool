@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { cacheConfig } from '../lib/cacheConfig';
 
 export interface PriceData {
   [symbol: string]: number;
@@ -8,7 +9,7 @@ export interface PriceData {
 
 interface UsePricesOptions {
   symbols: string[];
-  refreshInterval?: number; // en millisecondes, défaut 30 secondes
+  refreshInterval?: number; // en millisecondes, défaut depuis config
   enabled?: boolean;
 }
 
@@ -22,7 +23,7 @@ interface UsePricesReturn {
 
 export function usePrices({ 
   symbols, 
-  refreshInterval = 30000, // 30 secondes par défaut
+  refreshInterval = cacheConfig.refetchInterval.prices,
   enabled = true 
 }: UsePricesOptions): UsePricesReturn {
   const [prices, setPrices] = useState<PriceData>({});

@@ -81,6 +81,73 @@ class DefiLlamaProvider implements PriceProvider {
     cache.set(key, { ts: now, data: out });
     return out;
   }
+
+  /**
+   * Récupérer les prix historiques pour une date donnée
+   */
+  async getHistoricalPrices(defillamaIds: string[], date: Date, rid?: string): Promise<Record<string, number>> {
+    const log = logger.withRid(rid);
+    if (!defillamaIds.length) return {};
+    
+    const unique = Array.from(new Set(defillamaIds.filter(Boolean)));
+    const timestamp = Math.floor(date.getTime() / 1000); // Unix timestamp
+    
+    log.info('defillama historical request', { ids: unique.length, date: date.toISOString(), timestamp });
+    
+    // Préfixe coingecko: pour les IDs standard 
+    const llamaIds = unique.map(id => {
+      if (id.startsWith('0x')) {
+        return `ethereum:${id}`;
+      }
+      return `coingecko:${id}`;
+    });
+    
+    const url = `${config.defillamaBase}/prices/historical/${timestamp}/${llamaIds.join(',')}`;
+    log.info('defillama historical url', { url });
+    
+    try {
+      const res = await fetchWithTimeout(url, 10000, rid); // Plus de timeout pour l'historique
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      const json: LlamaResponse = await res.json();
+      const out: Record<string, number> = {};
+      
+      if (json?.coins) {
+        for (const [llamaId, entry] of Object.entries(json.coins)) {
+          // Retrouver l'ID original depuis l'ID DeFiLlama
+          const originalId = llamaId.replace('coingecko:', '').replace('ethereum:', '');
+          const matchingOriginal = unique.find(id => 
+            id === originalId || 
+            llamaId.endsWith(id) || 
+            id.toLowerCase() === originalId.toLowerCase()
+          );
+          
+          if (matchingOriginal && typeof entry?.price === 'number' && entry.price > 0) {
+            out[matchingOriginal] = entry.price;
+            log.info('defillama historical price found', { 
+              llamaId, 
+              originalId: matchingOriginal, 
+              price: entry.price, 
+              date: date.toISOString() 
+            });
+          }
+        }
+      }
+      
+      log.info('defillama historical result', { 
+        inputIds: unique.length, 
+        outputPrices: Object.keys(out).length, 
+        date: date.toISOString() 
+      });
+      
+      return out;
+    } catch (error) {
+      log.error('defillama historical error', { error: (error as Error).message, date: date.toISOString() });
+      return {};
+    }
+  }
 }
 
 export const defiLlamaProvider = new DefiLlamaProvider();

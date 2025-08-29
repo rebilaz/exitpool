@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Config } from './types';
 
 const envSchema = z.object({
-  GOOGLE_PROJECT_ID: z.string().min(1),
+  GOOGLE_PROJECT_ID: z.string().optional(),
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
   BQ_KEY_JSON: z.string().optional(),
   BQ_TOKENS_DATASET: z.string().default('Cryptopilot'),
@@ -30,7 +30,7 @@ if (!env.GOOGLE_APPLICATION_CREDENTIALS && env.BQ_KEY_JSON) {
 }
 
 export const config: Config = {
-  projectId: env.GOOGLE_PROJECT_ID,
+  projectId: env.GOOGLE_PROJECT_ID || 'dev-project',
   bq: {
     dataset: env.BQ_TOKENS_DATASET,
     table: env.BQ_TOKENS_TABLE,

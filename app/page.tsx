@@ -8,6 +8,7 @@ import TimeRangeTabs, { TimeRange } from "../components/TimeRangeTabs";
 import ChatbotWidget from "../components/ChatbotWidget";
 import PriceStatus from "../components/PriceStatus";
 import RefreshSettings from "../components/RefreshSettings";
+import { SymbolAutocomplete } from "../components/SymbolAutocomplete";
 import { usePrices } from "../hooks/usePrices";
 
 export default function Home() {
@@ -57,6 +58,7 @@ export default function Home() {
   const [symbol, setSymbol] = useState('');
   const [qty, setQty] = useState('');
   const [price, setPrice] = useState('');
+  const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]);
 
   const addPosition = async () => {
     if (!symbol || !qty) return;
@@ -64,40 +66,50 @@ export default function Home() {
     const q = parseFloat(qty);
     if (Number.isNaN(q)) return;
 
-    // Si pas de prix fourni, essayer de récupérer le prix actuel
-    let p = price ? parseFloat(price) : 0;
-    if (!price || Number.isNaN(p)) {
-      try {
-        const response = await fetch(`/api/prices?symbols=${encodeURIComponent(s)}`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.prices[s]) {
-            p = data.prices[s];
-          }
-        }
-      } catch (err) {
-        console.warn('Impossible de récupérer le prix automatiquement:', err);
-      }
-    }
+    try {
+      // Utiliser l'API réelle pour ajouter la transaction
+      const transactionData = {
+        userId: 'test-user-123', // User ID temporaire
+        symbol: s,
+        quantity: q,
+        price: price ? parseFloat(price) : undefined,
+        side: 'BUY',
+        note: 'Ajouté depuis la page d\'accueil',
+        timestamp: transactionDate ? new Date(transactionDate + 'T12:00:00').toISOString() : undefined
+      };
 
-    if (p <= 0) {
-      alert('Veuillez saisir un prix valide ou vérifier que le symbole existe');
-      return;
-    }
+      const response = await fetch('/api/transactions/add', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(transactionData),
+      });
 
-    setAssets(prev => {
-      const idx = prev.findIndex(a => a.symbol === s);
-      if (idx >= 0) {
-        const copy = [...prev];
-        const existing = copy[idx];
-        const newQty = existing.quantity + q;
-        const newAvg = (existing.quantity * existing.price + q * p) / newQty;
-        copy[idx] = { ...existing, quantity: newQty, price: newAvg };
-        return copy;
+      const result = await response.json();
+      
+      if (result.success) {
+        // Réinitialiser le formulaire
+        setSymbol(''); 
+        setQty(''); 
+        setPrice(''); 
+        setTransactionDate(new Date().toISOString().split('T')[0]);
+        setShowAdd(false);
+        
+        // Afficher un message de succès
+        alert('Transaction ajoutée avec succès !');
+        
+        // Note: Pour une vraie app, on pourrait aussi invalider les caches React Query ici
+        // et/ou déclencher un refresh des données du portfolio
+        
+      } else {
+        alert('Erreur lors de l\'ajout de la transaction: ' + result.error);
       }
-      return [...prev, { id: Date.now().toString(), symbol: s, name: s, quantity: q, price: p }];
-    });
-    setSymbol(''); setQty(''); setPrice(''); setShowAdd(false);
+      
+    } catch (error) {
+      console.error('Erreur lors de l\'ajout de la transaction:', error);
+      alert('Erreur lors de l\'ajout de la transaction');
+    }
   };
 
   return (
@@ -174,42 +186,88 @@ export default function Home() {
                 </div>
                 <TimeRangeTabs value={range as TimeRange} onChange={r => setRange(r as ChartRange)} />
               </div>
-              <PortfolioChart range={range} />
+              <PortfolioChart range={range} userId="test-user-123" />
             </section>
         </div>
       </div>
 
       {/* Add transaction panel (modal style w/ translucent backdrop) */}
       {showAdd && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center">
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-white/30 backdrop-blur-[2px]" onClick={() => setShowAdd(false)} />
-          <div className="relative w-full max-w-sm rounded-xl border border-gray-200 bg-white p-5 shadow-lg">
+          <div className="relative w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-lg overflow-visible">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900">Ajouter une transaction</h3>
-              <button onClick={() => setShowAdd(false)} className="text-gray-400 hover:text-gray-600">✕</button>
+              <h3 className="text-base font-semibold text-gray-900">Ajouter une transaction</h3>
+              <button onClick={() => setShowAdd(false)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
             </div>
             <div className="space-y-4">
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-gray-600">Symbole</label>
-                <input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="BTC, ETH, SOL..." className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-gray-700">Symbole</label>
+                <SymbolAutocomplete
+                  value={symbol}
+                  onChange={setSymbol}
+                  onSelect={(suggestion) => {
+                    setSymbol(suggestion.symbol);
+                  }}
+                  placeholder="BTC, ETH, SOL..."
+                  className="text-sm text-gray-900"
+                />
               </div>
-              <div className="flex gap-4">
-                <div className="flex-1 flex flex-col gap-1">
-                  <label className="text-[11px] font-medium text-gray-600">Quantité</label>
-                  <input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="0.5" className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
+                    Quantité
+                  </label>
+                  <input 
+                    type="number" 
+                    value={qty} 
+                    onChange={e => setQty(e.target.value)} 
+                    placeholder="0.5" 
+                    className="w-full border border-gray-300 rounded-lg p-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" 
+                  />
                 </div>
-                <div className="flex-1 flex flex-col gap-1">
-                  <label className="text-[11px] font-medium text-gray-600">Prix <span className="text-gray-400">(optionnel)</span></label>
-                  <input type="number" value={price} onChange={e => setPrice(e.target.value)} placeholder="Prix du marché" className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                <div className="w-full sm:w-40 sm:flex-[0.5]">
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
+                    Prix <span className="text-gray-400 font-normal">(optionnel)</span>
+                  </label>
+                  <input 
+                    type="number" 
+                    value={price} 
+                    onChange={e => setPrice(e.target.value)} 
+                    placeholder="Prix du marché" 
+                    className="w-full border border-gray-300 rounded-lg p-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" 
+                  />
                 </div>
               </div>
-              <div className="text-[10px] text-gray-500">
-                💡 Si aucun prix n'est spécifié, le prix actuel du marché sera utilisé automatiquement.
+              <div className="flex flex-col gap-2">
+                <label className="block text-xs font-medium text-gray-700">
+                  Date de la transaction
+                </label>
+                <input 
+                  type="date" 
+                  value={transactionDate} 
+                  onChange={e => setTransactionDate(e.target.value)} 
+                  max={new Date().toISOString().split('T')[0]} // Empêcher les dates futures
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" 
+                />
+              </div>
+              <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded-md">
+                💡 Cette transaction sera ajoutée à votre portefeuille BigQuery. Si aucun prix n'est spécifié, le prix actuel du marché sera utilisé. Pour les dates dans le passé, l'historique sera recalculé automatiquement.
               </div>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setShowAdd(false)} className="rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">Annuler</button>
-              <button onClick={addPosition} className="rounded-md bg-gray-900 px-3 py-2 text-xs font-medium text-white hover:bg-gray-800">Ajouter</button>
+            <div className="mt-6 flex justify-end gap-3">
+              <button 
+                onClick={() => setShowAdd(false)} 
+                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Annuler
+              </button>
+              <button 
+                onClick={addPosition} 
+                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+              >
+                Ajouter
+              </button>
             </div>
           </div>
         </div>

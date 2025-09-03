@@ -123,22 +123,8 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50">
       <div className="mx-auto w-full max-w-screen-xl px-4 pb-10 pt-4 md:pt-6">
-        {/* Header */}
-        <header className="mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl leading-none">🚀</span>
-            <span className="text-lg font-semibold text-gray-900">CryptoPilot</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <button className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:border-gray-400 hover:bg-gray-50">Login</button>
-            <button onClick={() => setShowAdd(true)} className="inline-flex items-center gap-1 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-gray-800">
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-              Ajouter transaction
-            </button>
-          </div>
-        </header>
 
         {/* HERO */}
         <div className="mb-8">
@@ -339,6 +325,6 @@ export default function Home() {
 
       {/* Chatbot Widget */}
       <ChatbotWidget />
-    </main>
+    </div>
   );
 }

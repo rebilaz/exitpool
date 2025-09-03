@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ReactQueryProvider } from "@/components/providers/ReactQueryProvider";
+import { SessionProvider } from "@/components/providers/SessionProvider";
 import Header from "@/components/ui/Header";
 
 const geistSans = Geist({
@@ -30,13 +31,15 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-neutral-900`}
       >
-        <Header />
-        <ReactQueryProvider>
-          {/* Fond de page clair sous le header */}
-          <main className="pt-16 md:pt-20 bg-neutral-50 min-h-dvh">
-            {children}
-          </main>
-        </ReactQueryProvider>
+        <SessionProvider>
+          <Header />
+          <ReactQueryProvider>
+            {/* Fond de page clair sous le header */}
+            <main className="pt-16 md:pt-20 bg-neutral-50 min-h-dvh">
+              {children}
+            </main>
+          </ReactQueryProvider>
+        </SessionProvider>
       </body>
     </html>
   );

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { useScrollCompact } from '@/hooks/useScrollCompact';
 import * as MobileNavMod from './MobileNav';
 import * as UserMenuMod from './UserMenu';
@@ -18,7 +19,8 @@ const navItems = [
 export default function Header() {
   const pathname = usePathname();
   const isCompact = useScrollCompact(24);
-  const isAuthenticated = false; // remplace par next-auth si dispo
+  const { data: session, status } = useSession();
+  const isAuthenticated = status === 'authenticated';
 
   return (
     // Backplate blanc COLLÉ en haut (plus de bande noire)

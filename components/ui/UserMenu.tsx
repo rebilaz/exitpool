@@ -1,11 +1,7 @@
 "use client";
 
 import React from 'react';
-// Mock session hook - replace with your actual session hook (e.g., from next-auth)
-const useMockSession = () => ({
-  data: { user: { name: 'John Doe', image: null } },
-  status: 'authenticated' as const, // or 'unauthenticated'
-});
+import { useSession, signOut } from 'next-auth/react';
 
 // Assuming you have shadcn/ui components available
 // You would typically install them via `npx shadcn-ui@latest add dropdown-menu avatar button`
@@ -15,7 +11,7 @@ const useMockSession = () => ({
 const DropdownMenu = ({ children }: { children: React.ReactNode }) => <div className="relative inline-block text-left">{children}</div>;
 const DropdownMenuTrigger = ({ children, asChild }: { children: React.ReactNode; asChild?: boolean }) => asChild ? <>{children}</> : <button>{children}</button>;
 const DropdownMenuContent = ({ children, align }: { children: React.ReactNode; align?: string }) => <div className="origin-top-right absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white dark:bg-neutral-800 ring-1 ring-black ring-opacity-5 focus:outline-none">{children}</div>;
-const DropdownMenuItem = ({ children }: { children: React.ReactNode }) => <a href="#" className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-neutral-700">{children}</a>;
+const DropdownMenuItem = ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => onClick ? <button onClick={onClick} className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-neutral-700">{children}</button> : <a href="#" className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-neutral-700">{children}</a>;
 const DropdownMenuSeparator = () => <hr className="border-gray-200 dark:border-neutral-700" />;
 
 // Placeholder for Avatar components
@@ -37,7 +33,7 @@ Button.displayName = 'Button';
 
 
 export function UserMenu() {
-  const { data: session, status } = useMockSession();
+  const { data: session, status } = useSession();
 
   if (status !== 'authenticated') {
     return (
@@ -70,7 +66,7 @@ export function UserMenu() {
         <DropdownMenuItem>Profile</DropdownMenuItem>
         <DropdownMenuItem>Settings</DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem>Logout</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => signOut()}>Logout</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

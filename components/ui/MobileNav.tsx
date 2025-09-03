@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useSession, signOut } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 
 // Placeholder pour l'icône Menu (hamburger)
@@ -39,6 +40,7 @@ const navItems = [
 export function MobileNav() {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
+  const { data: session, status } = useSession();
 
   const closeMenu = () => setIsOpen(false);
 
@@ -106,9 +108,21 @@ export function MobileNav() {
                   <PlusIcon className="h-4 w-4" />
                   Ajouter transaction
                 </button>
-                <button className="w-full text-center text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 px-4 py-2 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 font-medium transition-colors">
-                  Login
-                </button>
+                {status === 'authenticated' ? (
+                  <button 
+                    onClick={() => signOut()}
+                    className="w-full text-center text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 px-4 py-2 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 font-medium transition-colors"
+                  >
+                    Logout ({session?.user?.name})
+                  </button>
+                ) : (
+                  <Link
+                    href="/api/auth/signin"
+                    className="w-full text-center text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 px-4 py-2 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 font-medium transition-colors"
+                  >
+                    Login
+                  </Link>
+                )}
               </div>
             </div>
           </div>

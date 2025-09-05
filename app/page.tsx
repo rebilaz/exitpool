@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { PortfolioAsset } from "../components/PortfolioMain";
 import { ChartRange } from "../components/PortfolioChart";
@@ -14,20 +14,19 @@ import RefreshSettings from "../components/RefreshSettings";
 import { usePrices } from "../hooks/usePrices";
 import { useCurrentPortfolio } from "../hooks/usePortfolio";
 import TransactionForm from "@/components/ui/TransactionForm";
+import FileDropzone from "@/components/FileDropzone";
 
 export default function Home() {
-  // Récupérer la session NextAuth
+  // Session NextAuth
   const { data: session } = useSession();
 
-  // Utiliser l'ID permanent s'il existe, sinon fallback sur cp_temp_user_id
+  // User ID permanent ou temporaire
   const userId =
     session?.user?.id ??
-    (typeof window !== "undefined"
-      ? localStorage.getItem("cp_temp_user_id")
-      : "") ??
+    (typeof window !== "undefined" ? localStorage.getItem("cp_temp_user_id") : "") ??
     "";
 
-  // Récupérer le vrai portfolio depuis BigQuery
+  // Récupération du portfolio depuis BigQuery
   const {
     data: currentPortfolio,
     isLoading: portfolioLoading,
@@ -35,7 +34,7 @@ export default function Home() {
     refetch: refetchPortfolio,
   } = useCurrentPortfolio(userId);
 
-  // Hook pour récupérer les prix en temps réel
+  // Récupération des prix
   const symbols = useMemo(() => {
     if (!currentPortfolio?.assets) return [];
     return currentPortfolio.assets.map((asset) => asset.symbol);
@@ -47,14 +46,14 @@ export default function Home() {
     enabled: true,
   });
 
-  // Convertir les données du portfolio pour PortfolioMain
+  // Conversion des assets
   const assets: PortfolioAsset[] = useMemo(() => {
     if (!currentPortfolio?.assets) return [];
 
     return currentPortfolio.assets.map((asset, index) => ({
       id: `${asset.symbol}-${index}`,
       symbol: asset.symbol,
-      name: asset.symbol, // On pourra enrichir avec les vrais noms
+      name: asset.symbol,
       quantity: asset.quantity,
       price: prices[asset.symbol] || asset.currentPrice || 0,
       avgPrice: asset.avgPrice,
@@ -64,6 +63,9 @@ export default function Home() {
   const [showAdd, setShowAdd] = useState(false);
   const [range, setRange] = useState<ChartRange>("1Y");
   const [refreshInterval, setRefreshInterval] = useState(30000);
+
+  // Onglet actif (portfolio ou import)
+  const [portfolioTab, setPortfolioTab] = useState<"portfolio" | "import">("portfolio");
 
   // Valeur totale
   const totalValue = useMemo(() => {
@@ -78,6 +80,14 @@ export default function Home() {
 
   // Données synchronisées pour le chart
   const { todayValue, lastUpdatedLabel } = usePortfolioChartData(assets, lastUpdated);
+
+  // Gestionnaire d'import
+  const handleFileImport = (file: File) => {
+    console.log("Fichier importé :", file.name);
+    // TODO: parser CSV/XLSX et mettre à jour assets
+    // puis revenir à l’onglet portfolio si besoin :
+    // setPortfolioTab("portfolio");
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -120,7 +130,10 @@ export default function Home() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-[11px] font-medium text-gray-700 shadow-sm hover:bg-gray-50">
+              <button
+                onClick={() => setPortfolioTab("import")}
+                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-[11px] font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              >
                 Importer
               </button>
               <button
@@ -131,13 +144,57 @@ export default function Home() {
               </button>
             </div>
           </div>
+
+          {/* Tabs */}
           <div className="rounded-2xl border-2 border-gray-200 bg-white p-6 shadow-lg">
-            <PortfolioSection
-              assets={assets}
-              onRemove={() => {}}
-              pricesLoading={loading || portfolioLoading}
-              lastPriceUpdate={lastUpdated}
-            />
+            <div className="mb-4 flex items-center gap-2 border-b border-gray-200">
+              <button
+                onClick={() => setPortfolioTab("portfolio")}
+                className={`px-3 py-2 text-sm font-medium rounded-t-md ${
+                  portfolioTab === "portfolio"
+                    ? "text-gray-900 border-b-2 border-gray-900"
+                    : "text-gray-500 hover:text-gray-800"
+                }`}
+              >
+                Portefeuille
+              </button>
+              <button
+                onClick={() => setPortfolioTab("import")}
+                className={`px-3 py-2 text-sm font-medium rounded-t-md ${
+                  portfolioTab === "import"
+                    ? "text-gray-900 border-b-2 border-gray-900"
+                    : "text-gray-500 hover:text-gray-800"
+                }`}
+              >
+                Import
+              </button>
+            </div>
+
+            {portfolioTab === "portfolio" ? (
+              <PortfolioSection
+                assets={assets}
+                onRemove={() => {}}
+                pricesLoading={loading || portfolioLoading}
+                lastPriceUpdate={lastUpdated}
+              />
+            ) : (
+              <div>
+                <div className="mb-4">
+                  <h3 className="text-base font-semibold text-gray-900">Importer des transactions</h3>
+                  <p className="text-xs text-gray-500">Formats acceptés : CSV, XLSX</p>
+                </div>
+
+                <FileDropzone onFileSelect={handleFileImport} />
+
+                <ul className="mt-6 text-xs text-gray-500 list-disc pl-5 space-y-1">
+                  <li>
+                    Colonnes recommandées : <code>symbol</code>, <code>quantity</code>,{" "}
+                    <code>price</code>, <code>avgPrice</code>
+                  </li>
+                  <li>Vos positions apparaîtront dans l’onglet Portefeuille après import.</li>
+                </ul>
+              </div>
+            )}
           </div>
         </section>
 
@@ -145,12 +202,8 @@ export default function Home() {
         <section className="col-span-12 flex flex-col gap-4 mb-8">
           <div className="flex items-center justify-between">
             <div className="flex flex-col">
-              <h2 className="text-lg font-bold text-gray-900">
-                Évolution du portefeuille
-              </h2>
-              <span className="text-[12px] text-gray-500">
-                Powered by CryptoPilot
-              </span>
+              <h2 className="text-lg font-bold text-gray-900">Évolution du portefeuille</h2>
+              <span className="text-[12px] text-gray-500">Powered by CryptoPilot</span>
             </div>
             <TimeRangeTabs
               value={range as TimeRange}
@@ -159,8 +212,8 @@ export default function Home() {
           </div>
           <div className="rounded-2xl border-2 border-gray-200 bg-white p-6 shadow-lg">
             {userId && (
-              <PortfolioChart 
-                range={range} 
+              <PortfolioChart
+                range={range}
                 userId={userId}
                 todayValue={todayValue}
                 lastUpdatedLabel={lastUpdatedLabel}

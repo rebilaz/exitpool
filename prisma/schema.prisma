@@ -19,6 +19,8 @@ model User {
   email         String?   @unique
   emailVerified DateTime?
   image         String?
+  passwordHash  String?   // Hash du mot de passe pour l'auth email/password
+  createdAt     DateTime  @default(now())
 
   accounts      Account[]
   sessions      Session[]

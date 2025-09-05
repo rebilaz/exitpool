@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { BigQuery } from "@google-cloud/bigquery";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import config from "@/lib/config";
+import getBigQuery from "@/lib/db/bqClient";
 
 export async function POST(req: Request) {
   try {
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
     const globalUserId = session.user.id as string;
 
-    // --- Migration Prisma (optionnelle) ---
+    // --- Prisma (optionnel) ---
     try {
       const { prisma } = await import("@/app/api/auth/[...nextauth]/route");
       if (prisma?.transaction?.updateMany) {
@@ -37,17 +37,22 @@ export async function POST(req: Request) {
       console.info("[migration] Prisma skipped (no local table)");
     }
 
-    // --- Migration BigQuery ---
+    // --- BigQuery via singleton ---
     try {
-      const bq = new BigQuery({ projectId: config.projectId });
+      const bq = getBigQuery();
 
-      // ⚠️ Vérifie que ces valeurs correspondent bien à ton dataset et ta table BQ
-      const dataset = "Cryptopilot";
-      const table = "transactions";
-      const column = "user_id";
+      const projectId =
+        process.env.GOOGLE_PROJECT_ID ||
+        process.env.GCP_PROJECT_ID ||
+        config.projectId;
+
+      const dataset = process.env.BQ_DATASET || "Cryptopilot";
+      const table = process.env.BQ_TRANSACTIONS_TABLE || "transactions";
+      const column = process.env.BQ_USER_COLUMN || "user_id";
+      const location = process.env.BQ_LOCATION || "US";
 
       const query = `
-        UPDATE \`${config.projectId}.${dataset}.${table}\`
+        UPDATE \`${projectId}.${dataset}.${table}\`
         SET ${column} = @globalUserId
         WHERE ${column} = @tempUserId
       `;
@@ -55,13 +60,11 @@ export async function POST(req: Request) {
       const [job] = await bq.createQueryJob({
         query,
         params: { globalUserId, tempUserId },
-        location: "US", // adapte si ton dataset est ailleurs (ex: EU)
+        location,
       });
       await job.getQueryResults();
 
-      console.log(
-        `[migration] OK - Migrated from ${tempUserId} → ${globalUserId}`
-      );
+      console.log(`[migration] OK - ${tempUserId} → ${globalUserId}`);
     } catch (e) {
       console.error("[migration] BigQuery update failed", e);
       return NextResponse.json(

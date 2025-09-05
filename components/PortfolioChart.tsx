@@ -49,9 +49,11 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 interface PortfolioChartProps { 
   range: ChartRange; 
   userId?: string; // Rendre userId optionnel avec une valeur par défaut
+  todayValue?: number; // Valeur actuelle du portfolio pour remplacer le dernier point
+  lastUpdatedLabel?: string; // Label pour "MAJ hh:mm" ou autre indication
 }
 
-const PortfolioChart: React.FC<PortfolioChartProps> = ({ range, userId = "test-user-123" }) => {
+const PortfolioChart: React.FC<PortfolioChartProps> = ({ range, userId = "test-user-123", todayValue, lastUpdatedLabel }) => {
   // Utiliser les vraies données du portefeuille - PLUS DE MOCK
   const apiRange = mapRangeToAPI(range);
   const { data: portfolioHistory, isLoading, error } = usePortfolioHistory(userId, apiRange);
@@ -59,7 +61,7 @@ const PortfolioChart: React.FC<PortfolioChartProps> = ({ range, userId = "test-u
   const portfolioData = useMemo(() => {
     // Utiliser UNIQUEMENT les vraies données - supprimer le fallback mock
     if (portfolioHistory?.points && portfolioHistory.points.length > 0) {
-      return portfolioHistory.points.map(point => {
+      let chartData = portfolioHistory.points.map(point => {
         const date = new Date(point.date);
         let name: string;
         
@@ -87,11 +89,38 @@ const PortfolioChart: React.FC<PortfolioChartProps> = ({ range, userId = "test-u
           value: point.totalValue
         };
       });
+
+      // Si todayValue est fournie, remplacer ou ajouter le dernier point
+      if (todayValue !== undefined) {
+        if (chartData.length > 0) {
+          // Remplacer le dernier point avec la valeur actuelle
+          chartData[chartData.length - 1] = {
+            ...chartData[chartData.length - 1],
+            value: todayValue
+          };
+        } else {
+          // Si pas de données historiques, créer un point unique
+          chartData = [{
+            name: 'maintenant',
+            value: todayValue
+          }];
+        }
+      }
+
+      return chartData;
+    }
+
+    // Si pas de données historiques mais todayValue fournie, créer un point unique
+    if (todayValue !== undefined) {
+      return [{
+        name: 'maintenant',
+        value: todayValue
+      }];
     }
 
     // Si pas de données, retourner un tableau vide (pas de mock)
     return [];
-  }, [range, portfolioHistory]);
+  }, [range, portfolioHistory, todayValue]);
 
   const last = portfolioData.at(-1)?.value ?? 0;
   const prev = portfolioData.at(-2)?.value ?? last;
@@ -144,6 +173,12 @@ const PortfolioChart: React.FC<PortfolioChartProps> = ({ range, userId = "test-u
         </span>
         <span className="text-gray-300">•</span>
         {range} performance
+        {lastUpdatedLabel && (
+          <>
+            <span className="text-gray-300">•</span>
+            <span className="text-gray-400">MAJ {lastUpdatedLabel}</span>
+          </>
+        )}
       </div>
       <div className="w-full h-[320px]">
         <ResponsiveContainer width="100%" height="100%">

@@ -10,11 +10,9 @@ import * as MobileNavMod from './MobileNav';
 import * as UserMenuMod from './UserMenu';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Formulaire chargé côté client uniquement
-const TransactionForm = dynamic(
-  () => import('@/components/ui/TransactionForm'),
-  { ssr: false }
-);
+// Chargements client-only (évite les soucis d'hydratation)
+const TransactionForm = dynamic(() => import('@/components/ui/TransactionForm'), { ssr: false });
+const LoginModal = dynamic(() => import('@/components/ui/LoginModal'), { ssr: false });
 
 const MobileNav = (MobileNavMod as any).default ?? (MobileNavMod as any).MobileNav;
 const UserMenu = (UserMenuMod as any).default ?? (UserMenuMod as any).UserMenu;
@@ -34,9 +32,10 @@ export default function Header() {
   const isAuthenticated = status === 'authenticated';
 
   const [showAdd, setShowAdd] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
   const [qc] = useState(() => new QueryClient());
 
-  // Migration auto des transactions au login
+  // Migration auto des transactions temp → userId permanent après authentification
   useEffect(() => {
     if (status !== 'authenticated') return;
 
@@ -58,7 +57,7 @@ export default function Header() {
           localStorage.removeItem('cp_temp_user_id');
           router.refresh();
         } else {
-          console.warn('[migration] API responded with error', res.status);
+          console.warn('[migration] API responded with', res.status);
         }
       } catch (e) {
         console.warn('[migration] failed', e);
@@ -72,7 +71,7 @@ export default function Header() {
         <header
           data-compact={isCompact ? 'true' : 'false'}
           className={[
-            'mx-auto max-w-7xl rounded-2xl border bg-white/90 backdrop-blur-xl',
+            'group/header mx-auto max-w-7xl rounded-2xl border bg-white/90 backdrop-blur-xl',
             'border-neutral-200 shadow-[0_2px_12px_rgba(0,0,0,0.06)]',
             'transition-[height,background,box-shadow] duration-200',
             isCompact
@@ -80,6 +79,7 @@ export default function Header() {
               : 'h-16',
             'motion-reduce:transition-none',
           ].join(' ')}
+          style={{ willChange: 'height, background, box-shadow' }}
         >
           <div className="flex h-full items-center gap-3 px-3 sm:px-4">
             {/* Marque */}
@@ -96,11 +96,7 @@ export default function Header() {
               aria-label="Navigation principale"
               className="mx-auto hidden md:flex items-center gap-1 max-w-[640px] overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none]"
             >
-              <style jsx>{`
-                nav::-webkit-scrollbar {
-                  display: none;
-                }
-              `}</style>
+              <style jsx>{`nav::-webkit-scrollbar { display: none; }`}</style>
               {navItems.map((item) => {
                 const active =
                   pathname === item.href || pathname?.startsWith(item.href + '/');
@@ -128,7 +124,8 @@ export default function Header() {
               <button
                 type="button"
                 onClick={() => setShowAdd(true)}
-                className="hidden sm:inline-flex h-10 items-center rounded-xl bg-black px-3 text-sm font-semibold text-white hover:bg-neutral-900 active:translate-y-[1px] focus:outline-none focus-visible:ring-2 focus-visible:ring-black/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                className="hidden sm:inline-flex h-10 group-data-[compact=true]/header:h-6 items-center rounded-xl group-data-[compact=true]/header:rounded-lg bg-black px-4 group-data-[compact=true]/header:px-2 text-sm group-data-[compact=true]/header:text-[10px] font-semibold text-white hover:bg-neutral-900 active:translate-y-[1px] focus:outline-none focus-visible:ring-2 focus-visible:ring-black/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white transition-all duration-300"
+                aria-label="Ajouter une transaction"
               >
                 + Ajouter transaction
               </button>
@@ -138,27 +135,27 @@ export default function Header() {
               {/* Avatar / état session */}
               {status === 'loading' ? (
                 <div
-                  className="h-10 w-10 rounded-full bg-neutral-200 animate-pulse"
+                  className="h-10 w-10 group-data-[compact=true]/header:h-6 group-data-[compact=true]/header:w-6 rounded-full bg-neutral-200 animate-pulse transition-all duration-300"
                   aria-hidden
                 />
               ) : isAuthenticated ? (
-                <div className="flex h-10 items-center">
+                <div className="flex h-10 group-data-[compact=true]/header:h-6 items-center transition-all duration-300">
                   {UserMenu ? <UserMenu /> : null}
                 </div>
               ) : (
-                <Link
-                  href="/api/auth/signin"
-                  className="rounded-xl px-3 py-2 text-sm border border-neutral-300 text-neutral-900 hover:bg-neutral-50 active:translate-y-[1px] focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                <button
+                  onClick={() => setShowLogin(true)}
+                  className="rounded-xl group-data-[compact=true]/header:rounded-lg px-4 group-data-[compact=true]/header:px-2 py-2 group-data-[compact=true]/header:py-1 text-sm group-data-[compact=true]/header:text-[10px] border border-neutral-300 text-neutral-900 hover:bg-neutral-50 active:translate-y-[1px] focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white transition-all duration-300"
                 >
                   Login
-                </Link>
+                </button>
               )}
             </div>
           </div>
         </header>
       </div>
 
-      {/* Transaction Form */}
+      {/* Modales */}
       {showAdd && (
         <QueryClientProvider client={qc}>
           <TransactionForm
@@ -167,6 +164,13 @@ export default function Header() {
             onClose={() => setShowAdd(false)}
           />
         </QueryClientProvider>
+      )}
+
+      {showLogin && (
+        <LoginModal
+          isOpen={showLogin}
+          onClose={() => setShowLogin(false)}
+        />
       )}
     </div>
   );

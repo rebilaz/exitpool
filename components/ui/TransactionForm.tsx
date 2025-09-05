@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { SymbolAutocomplete } from "@/components/SymbolAutocomplete";
 import { useAddTransaction } from "@/hooks/usePortfolio";
@@ -37,7 +36,6 @@ export default function TransactionForm({
   onSuccess,
   defaults,
 }: Props) {
-  const router = useRouter();
   const { data: session } = useSession();
 
   // États du formulaire
@@ -63,9 +61,7 @@ export default function TransactionForm({
 
   // Réinitialiser le formulaire quand on ouvre/ferme
   useEffect(() => {
-    if (isOpen) {
-      setAddStatus("idle");
-    }
+    if (isOpen) setAddStatus("idle");
   }, [isOpen]);
 
   const handleSubmit = async () => {
@@ -74,7 +70,6 @@ export default function TransactionForm({
     // Toujours utiliser l'ID Prisma en priorité si dispo
     const effectiveUserId =
       session?.user?.id ?? userId ?? getOrCreateTempUserId();
-
     if (!effectiveUserId) return;
 
     const s = symbol.toUpperCase();
@@ -90,31 +85,27 @@ export default function TransactionForm({
         symbol: s,
         quantity: q,
         price: price ? parseFloat(price) : undefined,
-        side: side,
+        side,
         note: "Ajouté via TransactionForm",
         timestamp: transactionDate
           ? new Date(transactionDate + "T12:00:00").toISOString()
           : undefined,
       });
 
+      // Succès immédiat
       setAddStatus("success");
 
-      // Réinitialiser le formulaire après un délai
-      setTimeout(() => {
-        setSymbol(defaults?.symbol || "");
-        setQty("");
-        setPrice("");
-        setTransactionDate(
-          defaults?.dateISO || new Date().toISOString().split("T")[0]
-        );
-        setSide(defaults?.side || "BUY");
-        setAddStatus("idle");
+      // Reset instantané du formulaire
+      setSymbol(defaults?.symbol || "");
+      setQty("");
+      setPrice("");
+      setTransactionDate(defaults?.dateISO || new Date().toISOString().split("T")[0]);
+      setSide(defaults?.side || "BUY");
+      setAddStatus("idle");
 
-        // Actualiser l'UI et callbacks
-        router.refresh();
-        onSuccess?.();
-        onClose?.();
-      }, 1500);
+      // Rafraîchissement côté parent (Home.tsx fait refetchPortfolio dans onSuccess)
+      onSuccess?.();
+      onClose?.();
     } catch (error) {
       setAddStatus("error");
       console.error("Erreur lors de l'ajout de la transaction:", error);
@@ -164,7 +155,7 @@ export default function TransactionForm({
             />
           </div>
 
-          {/* Quantité + Prix */}
+        {/* Quantité + Prix */}
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
               <label className="block text-xs font-medium text-gray-700 mb-2">

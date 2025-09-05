@@ -2,8 +2,10 @@
 
 import { useState, useMemo } from 'react';
 import { useSession } from "next-auth/react";
-import PortfolioMain, { PortfolioAsset } from "../components/PortfolioMain";
-import PortfolioChart, { ChartRange } from "../components/PortfolioChart";
+import { PortfolioAsset } from "../components/PortfolioMain";
+import { ChartRange } from "../components/PortfolioChart";
+import PortfolioSection, { usePortfolioChartData } from "../components/PortfolioSection";
+import PortfolioChart from "../components/PortfolioChart";
 import ValueHero from "../components/ValueHero";
 import TimeRangeTabs, { TimeRange } from "../components/TimeRangeTabs";
 import ChatbotWidget from "../components/ChatbotWidget";
@@ -74,6 +76,9 @@ export default function Home() {
   const pnl24h = currentPortfolio?.totalPnl || 0;
   const pnlYTD = currentPortfolio?.totalPnl || 0;
 
+  // Données synchronisées pour le chart
+  const { todayValue, lastUpdatedLabel } = usePortfolioChartData(assets, lastUpdated);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto w-full max-w-screen-xl px-4 pb-10 pt-4 md:pt-6">
@@ -127,7 +132,7 @@ export default function Home() {
             </div>
           </div>
           <div className="rounded-2xl border-2 border-gray-200 bg-white p-6 shadow-lg">
-            <PortfolioMain
+            <PortfolioSection
               assets={assets}
               onRemove={() => {}}
               pricesLoading={loading || portfolioLoading}
@@ -153,7 +158,14 @@ export default function Home() {
             />
           </div>
           <div className="rounded-2xl border-2 border-gray-200 bg-white p-6 shadow-lg">
-            {userId && <PortfolioChart range={range} userId={userId} />}
+            {userId && (
+              <PortfolioChart 
+                range={range} 
+                userId={userId}
+                todayValue={todayValue}
+                lastUpdatedLabel={lastUpdatedLabel}
+              />
+            )}
           </div>
         </section>
       </div>

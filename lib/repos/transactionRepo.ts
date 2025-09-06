@@ -1,3 +1,4 @@
+// lib/repos/transactionRepo.ts
 import getBigQuery from "../db/bqClient";
 import config from "../config";
 import logger from "../logger";
@@ -11,6 +12,7 @@ export interface Transaction {
   side: "BUY" | "SELL" | "TRANSFER";
   timestamp: Date;
   note?: string;
+  client_tx_id?: string | null;
 }
 
 export interface AddTransactionData {
@@ -20,36 +22,25 @@ export interface AddTransactionData {
   price?: number;
   side: "BUY" | "SELL" | "TRANSFER";
   timestamp?: Date;
-  note?: string;
-  /** Optionnel : si fourni, sera utilisé comme transaction_id (idempotence) */
-  clientTxId?: string;
-}
-
-export interface PortfolioSnapshot {
-  user_id: string;
-  date: Date;
-  total_value: number;
-  breakdown: string; // JSON string
-}
-
-export interface SaveSnapshotData {
-  date: Date;
-  totalValue: number;
-  breakdown: Record<string, { quantity: number; value: number; price: number }>;
+  note?: string | null;
+  /** Idempotence côté client */
+  clientTxId?: string | null;
 }
 
 export class TransactionRepo {
   private dataset = "Cryptopilot";
 
   /**
-   * Ajout idempotent (MERGE sur transaction_id).
-   * Si clientTxId est fourni, il devient le transaction_id (idempotence côté client).
+   * Upsert idempotent via MERGE sur transaction_id.
+   * Si clientTxId est fourni, on l’utilise comme transaction_id ET on le stocke dans client_tx_id.
    */
   async addTransaction(data: AddTransactionData): Promise<string> {
     const bq = getBigQuery();
 
     const transactionId = data.clientTxId ?? crypto.randomUUID();
-    const timestamp = (data.timestamp ?? new Date()).toISOString();
+
+    // Toujours un timestamp non nul (ISO)
+    const tsIso = (data.timestamp ?? new Date()).toISOString();
 
     const query = `
       MERGE \`${config.projectId}.${this.dataset}.transactions\` AS target
@@ -61,43 +52,60 @@ export class TransactionRepo {
           @quantity AS quantity,
           @price AS price,
           @side AS side,
-          TIMESTAMP(@timestamp) AS timestamp,
-          @note AS note
+          TIMESTAMP(@tsIso) AS timestamp,
+          @note AS note,
+          @clientTxId AS client_tx_id
       ) AS src
       ON target.transaction_id = src.transaction_id
       WHEN MATCHED THEN UPDATE SET
-        user_id   = src.user_id,
-        symbol    = src.symbol,
-        quantity  = src.quantity,
-        price     = src.price,
-        side      = src.side,
-        timestamp = src.timestamp,
-        note      = src.note
+        user_id     = src.user_id,
+        symbol      = src.symbol,
+        quantity    = src.quantity,
+        price       = src.price,
+        side        = src.side,
+        timestamp   = src.timestamp,
+        note        = src.note,
+        client_tx_id= src.client_tx_id
       WHEN NOT MATCHED THEN INSERT (
-        transaction_id, user_id, symbol, quantity, price, side, timestamp, note
+        transaction_id, user_id, symbol, quantity, price, side, timestamp, note, client_tx_id
       ) VALUES (
-        src.transaction_id, src.user_id, src.symbol, src.quantity, src.price, src.side, src.timestamp, src.note
-      )`;
+        src.transaction_id, src.user_id, src.symbol, src.quantity, src.price, src.side, src.timestamp, src.note, src.client_tx_id
+      )
+    `;
 
     const params = {
       transactionId,
       userId: data.userId,
       symbol: String(data.symbol).toUpperCase(),
-      quantity: data.quantity,
-      price: data.price ?? 0,
+      quantity: Number(data.quantity),
+      price: data.price != null ? Number(data.price) : 0, // champ REQUIRED
       side: data.side,
-      timestamp,
+      tsIso,
       note: data.note ?? null,
+      clientTxId: data.clientTxId ?? null,
     };
+
+    // ➜ BigQuery exige les types pour tout param susceptible d'être null
+    const types = {
+      transactionId: "STRING",
+      userId: "STRING",
+      symbol: "STRING",
+      quantity: "FLOAT64",
+      price: "FLOAT64",
+      side: "STRING",
+      tsIso: "STRING",       // converti en TIMESTAMP(...) dans la requête
+      note: "STRING",        // nullable
+      clientTxId: "STRING",  // nullable
+    } as const;
 
     logger.info("Adding transaction (MERGE)", {
       userId: data.userId,
-      symbol: data.symbol,
+      symbol: params.symbol,
       side: data.side,
       transactionId,
     });
 
-    const [job] = await bq.createQueryJob({ query, params });
+    const [job] = await bq.createQueryJob({ query, params, types });
     await job.getQueryResults();
 
     logger.info("Transaction upserted", { transactionId, userId: data.userId });
@@ -114,25 +122,28 @@ export class TransactionRepo {
 
     let whereClause = `WHERE user_id = @userId`;
     const params: any = { userId, limit };
+    const types: any = { userId: "STRING", limit: "INT64" };
 
     if (from) {
       whereClause += ` AND timestamp >= @fromDate`;
       params.fromDate = from.toISOString();
+      types.fromDate = "STRING";
     }
     if (to) {
       whereClause += ` AND timestamp <= @toDate`;
       params.toDate = to.toISOString();
+      types.toDate = "STRING";
     }
 
     const query = `
-      SELECT transaction_id, user_id, symbol, quantity, price, side, timestamp, note
+      SELECT transaction_id, user_id, symbol, quantity, price, side, timestamp, note, client_tx_id
       FROM \`${config.projectId}.${this.dataset}.transactions\`
       ${whereClause}
       ORDER BY timestamp DESC
       LIMIT @limit
     `;
 
-    const [job] = await bq.createQueryJob({ query, params });
+    const [job] = await bq.createQueryJob({ query, params, types });
     const [rows] = await job.getQueryResults();
 
     return rows.map((row: any) => ({
@@ -144,6 +155,7 @@ export class TransactionRepo {
       side: row.side,
       timestamp: new Date(row.timestamp.value ?? row.timestamp),
       note: row.note ?? undefined,
+      client_tx_id: row.client_tx_id ?? null,
     }));
   }
 
@@ -167,8 +179,9 @@ export class TransactionRepo {
     `;
 
     const params = { userId };
+    const types = { userId: "STRING" as const };
 
-    const [job] = await bq.createQueryJob({ query, params });
+    const [job] = await bq.createQueryJob({ query, params, types });
     const [rows] = await job.getQueryResults();
 
     const portfolio: Record<string, { quantity: number; avgPrice: number }> = {};

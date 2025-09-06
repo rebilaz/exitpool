@@ -75,16 +75,38 @@ export class PortfolioService {
   async addTransaction(userId: string, data: Omit<AddTransactionData, "userId">): Promise<string>;
   async addTransaction(data: AddTransactionData): Promise<string>;
   async addTransaction(arg1: string | AddTransactionData, arg2?: Omit<AddTransactionData, "userId">): Promise<string> {
-    const payload: AddTransactionData =
-      typeof arg1 === "string" ? { ...(arg2 as any), userId: arg1 } : arg1;
+    try {
+      const payload: AddTransactionData =
+        typeof arg1 === "string" ? { ...(arg2 as any), userId: arg1 } : arg1;
 
-    // récupérer un prix si manquant (BUY/SELL)
-    if ((payload.side === "BUY" || payload.side === "SELL") && (payload.price == null || Number.isNaN(payload.price))) {
-      const prices = await pricingCentralService.getCurrentPrices([payload.symbol]);
-      const p = prices[String(payload.symbol).toUpperCase()];
-      if (p != null) payload.price = p;
+      console.info("[PORTFOLIO] addTransaction start", {
+        userId: payload.userId,
+        symbol: payload.symbol,
+        side: payload.side,
+        qty: payload.quantity,
+        hasPrice: payload.price != null,
+        ts: payload.timestamp,
+        clientTxId: payload.clientTxId
+      });
+
+      // récupérer un prix si manquant (BUY/SELL)
+      if ((payload.side === "BUY" || payload.side === "SELL") && (payload.price == null || Number.isNaN(payload.price))) {
+        console.info("[PORTFOLIO] price resolution", { mode: "lookup" });
+        const prices = await pricingCentralService.getCurrentPrices([payload.symbol]);
+        const p = prices[String(payload.symbol).toUpperCase()];
+        if (p != null) payload.price = p;
+      } else {
+        console.info("[PORTFOLIO] price resolution", { mode: "provided" });
+      }
+      
+      const result = await transactionRepo.addTransaction(payload);
+      console.info("[PORTFOLIO] transaction upserted", { symbol: payload.symbol });
+      
+      return result;
+    } catch (e: any) {
+      console.error("[PORTFOLIO] addTransaction error", { message: (e as Error)?.message, stack: (e as Error)?.stack });
+      throw e;
     }
-    return transactionRepo.addTransaction(payload);
   }
 
   triggerAfterTransactionJob(input: { userId: string; symbol: string; transactionDate: Date }) {
@@ -348,6 +370,7 @@ export class PortfolioService {
         totalValue: portfolio.totalValue,
         breakdown,
       });
+      console.info("[PORTFOLIO] snapshot updated", { scope: "current" });
       logger.info("Current snapshot updated", { userId, totalValue: portfolio.totalValue });
     } catch (error) {
       logger.error("Failed to update current snapshot", { userId, error });

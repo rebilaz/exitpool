@@ -81,6 +81,7 @@ export default function Home() {
   // === Import bulk ===
   const [previewRows, setPreviewRows] = useState<NormalizedRow[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const bulkImport = useBulkImport();
 
   // XLSX (si activé)
@@ -137,7 +138,8 @@ export default function Home() {
 
   // Gestionnaire d'import
   const handleFileImport = async (file: File) => {
-    setParseError(null);
+  setParseError(null);
+  setSelectedFile(file);
     console.info("[IMPORT/UI] start", { name: file.name, size: file.size, type: file.type });
 
     try {
@@ -326,7 +328,14 @@ export default function Home() {
 
                 {parseError && <div className="mt-3 text-xs text-red-600">{parseError}</div>}
 
-                <ImportPreviewTable rows={previewRows} />
+                <ImportPreviewTable
+                  rows={previewRows}
+                  fileName={selectedFile?.name}
+                  onRemoveFile={() => {
+                    setSelectedFile(null);
+                    setPreviewRows([]);
+                  }}
+                />
 
                 {previewRows.length > 0 && (
                   <div className="mt-4 flex items-center gap-3">

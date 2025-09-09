@@ -16,6 +16,7 @@ export type NormalizedRow = {
   fee_currency?: string;
   exchange?: string;
   import_batch_id?: string;
+  total?: number; // <-- AJOUT
 };
 
 type BulkPayload = {

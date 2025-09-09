@@ -1,11 +1,12 @@
 // Script simple pour vérifier les données BigQuery sans imports complexes
 const { BigQuery } = require('@google-cloud/bigquery');
 const fs = require('fs');
+const path = require('path');
 
 // Configuration BigQuery
 const bigquery = new BigQuery({
   projectId: 'starlit-verve-458814-u9',
-  keyFilename: './starlit-verve-458814-u9-8d2afefa106b.json'
+  keyFilename: path.join(__dirname, 'starlit-verve-458814-u9-8d2afefa106b.json')
 });
 
 async function checkData() {

@@ -10,18 +10,16 @@ import * as MobileNavMod from './MobileNav';
 import * as UserMenuMod from './UserMenu';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Chargements client-only (évite les soucis d'hydratation)
 const TransactionForm = dynamic(() => import('@/components/ui/TransactionForm'), { ssr: false });
 const LoginModal = dynamic(() => import('@/components/ui/LoginModal'), { ssr: false });
 
 const MobileNav = (MobileNavMod as any).default ?? (MobileNavMod as any).MobileNav;
 const UserMenu = (UserMenuMod as any).default ?? (UserMenuMod as any).UserMenu;
 
+// Navigation réduite : Portefeuille (home) + Transactions
 const navItems = [
-  { href: '/dashboard', label: 'Tableau de bord' },
-  { href: '/portfolio', label: 'Portefeuille' },
+  { href: '/', label: 'Portefeuille' },
   { href: '/transactions', label: 'Transactions' },
-  { href: '/insights', label: 'Insights' },
 ];
 
 export default function Header() {
@@ -99,7 +97,9 @@ export default function Header() {
               <style jsx>{`nav::-webkit-scrollbar { display: none; }`}</style>
               {navItems.map((item) => {
                 const active =
-                  pathname === item.href || pathname?.startsWith(item.href + '/');
+                  pathname === item.href ||
+                  (item.href === '/' && pathname === '/') ||
+                  pathname?.startsWith(item.href + '/');
                 return (
                   <Link
                     key={item.href}

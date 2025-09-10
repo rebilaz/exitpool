@@ -3,6 +3,7 @@
 
 import React from "react";
 import type { NormalizedRow } from "@/hooks/useBulkImport";
+import { useSymbolSuggestions, type SymbolSuggestion } from "@/hooks/useSymbolSuggestions";
 import {
   X,
   Calculator,
@@ -100,6 +101,84 @@ function SideBadge({ side }: { side?: string }) {
     <span className={`px-2 py-0.5 rounded-md text-[11px] font-medium ${cls}`}>
       {s || ""}
     </span>
+  );
+}
+
+/* ---------------- Symbol Resolution Component ---------------- */
+function SymbolResolver({ 
+  parentKey, 
+  symbol, 
+  isOpen, 
+  onOpen, 
+  onClose, 
+  onResolve 
+}: {
+  parentKey: string;
+  symbol: string;
+  isOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  onResolve: (suggestion: SymbolSuggestion) => void;
+}) {
+  const { suggestions, loading } = useSymbolSuggestions(symbol);
+  
+  // Si une seule suggestion ou aucune, pas besoin de résolution
+  if (!suggestions || suggestions.length <= 1) {
+    return <span className="font-mono">{symbol}</span>;
+  }
+
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-2">
+        <span className="font-mono">{symbol}</span>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="px-2 py-1 text-xs bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors"
+          title={`${suggestions.length} correspondances trouvées`}
+        >
+          Résoudre
+        </button>
+      </div>
+      
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg min-w-[300px] max-h-64 overflow-y-auto">
+          <div className="p-2 border-b border-gray-100 text-xs text-gray-600">
+            Choisissez le bon projet ({suggestions.length} options) :
+          </div>
+          {loading ? (
+            <div className="p-3 text-xs text-gray-500">Chargement...</div>
+          ) : (
+            <ul className="py-1">
+              {suggestions.map((suggestion, idx) => (
+                <li key={idx}>
+                  <button
+                    type="button"
+                    onClick={() => onResolve(suggestion)}
+                    className="w-full px-3 py-2 text-left hover:bg-gray-50 flex flex-col gap-1 border-b border-gray-50 last:border-b-0"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm">{suggestion.symbol}</span>
+                      <span className="text-xs text-gray-500">({suggestion.coingecko_id})</span>
+                    </div>
+                    <div className="text-xs text-gray-600 truncate">{suggestion.name}</div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="p-2 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full px-2 py-1 text-xs text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -302,9 +381,10 @@ type Props = {
   rows: NormalizedRow[];
   fileName?: string;
   onRemoveFile?: () => void;
+  onResolveSymbol?: (parentKey: string, suggestion: SymbolSuggestion) => void;
 };
 
-export default function ImportPreviewTable({ rows, fileName, onRemoveFile }: Props) {
+export default function ImportPreviewTable({ rows, fileName, onRemoveFile, onResolveSymbol }: Props) {
   if (!rows || rows.length === 0) return null;
 
   const isAllMexc = rows.every((r) => r.exchange === "MEXC");
@@ -312,6 +392,8 @@ export default function ImportPreviewTable({ rows, fileName, onRemoveFile }: Pro
     isAllMexc ? "mexc-ts" : "none"
   );
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  const [resolveOpen, setResolveOpen] = React.useState<string | null>(null);
+  const [resolvedSymbols, setResolvedSymbols] = React.useState<Record<string, SymbolSuggestion>>({});
 
   const parents = React.useMemo(
     () => (groupMode === "mexc-ts" ? groupByExactTimestamp(rows) : []),
@@ -320,6 +402,26 @@ export default function ImportPreviewTable({ rows, fileName, onRemoveFile }: Pro
 
   const toggleRow = (key: string) =>
     setExpanded((m) => ({ ...m, [key]: !m[key] }));
+
+  const handleResolveSymbol = (parentKey: string, suggestion: SymbolSuggestion) => {
+    setResolvedSymbols(prev => ({ ...prev, [parentKey]: suggestion }));
+    setResolveOpen(null);
+    onResolveSymbol?.(parentKey, suggestion);
+  };
+
+  // Fermer le panneau de résolution si on clique ailleurs
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (resolveOpen && !(event.target as Element)?.closest('.relative')) {
+        setResolveOpen(null);
+      }
+    };
+
+    if (resolveOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [resolveOpen]);
 
   const fmtStr = (v?: string) => (v && v.trim().length ? v : "");
 
@@ -454,7 +556,23 @@ export default function ImportPreviewTable({ rows, fileName, onRemoveFile }: Pro
                         {expanded[p.key] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       </button>
                     </td>
-                    <td className="px-3 py-2 font-mono">{p.symbol}</td>
+                    <td className="px-3 py-2">
+                      {resolvedSymbols[p.key] ? (
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{resolvedSymbols[p.key].symbol}</span>
+                          <span className="text-xs text-gray-500">({resolvedSymbols[p.key].name})</span>
+                        </div>
+                      ) : (
+                        <SymbolResolver
+                          parentKey={p.key}
+                          symbol={p.symbol}
+                          isOpen={resolveOpen === p.key}
+                          onOpen={() => setResolveOpen(p.key)}
+                          onClose={() => setResolveOpen(null)}
+                          onResolve={(suggestion) => handleResolveSymbol(p.key, suggestion)}
+                        />
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <SideBadge side={p.side} />
                     </td>

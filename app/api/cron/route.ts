@@ -1,37 +1,34 @@
-// app/api/cron/route.ts
-import { NextRequest } from "next/server";
-import { TwitterApi } from "twitter-api-v2";
+import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";
+// tes créneaux horaires (UTC par défaut sur Vercel)
+const SCHEDULE = [
+  { hour: 8, text: "☕️ Bonjour, voici le tweet #1" },
+  { hour: 10, text: "💡 Astuce du matin (#2)" },
+  { hour: 12, text: "🍔 Pause de midi (#3)" },
+  { hour: 14, text: "📊 Analyse rapide (#4)" },
+  { hour: 16, text: "⚡️ Info flash (#5)" },
+  { hour: 18, text: "🌇 Fin de journée (#6)" },
+  { hour: 21, text: "🌙 Tweet du soir (#7)" }
+];
 
-export async function GET(req: NextRequest) {
-  // 1) Vérif du secret
-  const url = new URL(req.url);
-  const secret = url.searchParams.get("secret");
-  if (secret !== process.env.CRON_SECRET) {
-    return new Response("Unauthorized", { status: 401 });
+export async function GET() {
+  const now = new Date();
+  const hour = now.getUTCHours();
+
+  // On regarde si un tweet est prévu à cette heure
+  const slot = SCHEDULE.find(s => s.hour === hour);
+
+  if (slot) {
+    await tweet(slot.text);
+    return NextResponse.json({ ok: true, message: `Tweet envoyé à ${hour}h` });
   }
 
-  // 2) Construire le message (MVP)
-  const slot = url.searchParams.get("slot") ?? "any";
-  const text = `CryptoPilot: auto-post (${slot}) ✈️`;
+  return NextResponse.json({ ok: true, message: "Aucun tweet prévu cette heure" });
+}
 
-  // 3) Poster sur X
-  const client = new TwitterApi({
-    appKey: process.env.X_API_KEY!,
-    appSecret: process.env.X_API_KEY_SECRET!,
-    accessToken: process.env.ACCESS_TOKEN!,
-    accessSecret: process.env.ACCESS_TOKEN_SECRET!,
-  });
-
-  try {
-    const tw = await client.v2.tweet(text);
-    return Response.json({
-      ok: true,
-      text,
-      tweet: `https://x.com/i/web/status/${tw.data.id}`,
-    });
-  } catch (e: any) {
-    return Response.json({ ok: false, error: e.message }, { status: 500 });
-  }
+// Fonction tweet (à brancher sur Twitter API)
+async function tweet(text: string) {
+  console.log("Tweet envoyé:", text);
+  // const client = new TwitterApi(process.env.TWITTER_BEARER!);
+  // await client.v2.tweet(text);
 }

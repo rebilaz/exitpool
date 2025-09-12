@@ -14,6 +14,14 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
+      - name: Debug CRON_URL
+        env:
+          URL: ${{ secrets.CRON_URL }}
+        run: |
+          echo "🔎 Debugging CRON_URL"
+          echo "len=$(printf '%s' "$URL" | wc -c)"
+          printf '%s' "$URL" | hexdump -C
+
       - name: Call /api/cron
         env:
           URL: ${{ secrets.CRON_URL }}
@@ -28,5 +36,9 @@ jobs:
             -H "Authorization: Bearer $SECRET" \
             "$URL" || true)
           echo "HTTP $CODE"
-          cat /tmp/resp.json || true
+          if [ -f /tmp/resp.json ]; then
+            cat /tmp/resp.json || true
+          else
+            echo "No response file; curl failed before request."
+          fi
           test "$CODE" -lt 400

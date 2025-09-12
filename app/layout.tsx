@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ReactQueryProvider } from "@/components/providers/ReactQueryProvider";
 import { SessionProvider } from "@/components/providers/SessionProvider";
+import { ReownProvider } from "@/components/providers/ReownProvider"; // ✅ ajouté
 import Header from "@/components/ui/Header";
 import { Analytics } from "@vercel/analytics/react";
 
@@ -28,18 +29,18 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fr" suppressHydrationWarning>
-      {/* Fond global blanc + texte sombre */}
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-neutral-900`}
       >
         <SessionProvider>
-          <Header />
-          <ReactQueryProvider>
-            {/* Fond de page clair sous le header */}
-            <main className="pt-16 md:pt-20 bg-neutral-50 min-h-dvh">
-              {children}
-            </main>
-          </ReactQueryProvider>
+          <ReownProvider>
+            <Header />
+            <ReactQueryProvider>
+              <main className="pt-16 md:pt-20 bg-neutral-50 min-h-dvh">
+                {children}
+              </main>
+            </ReactQueryProvider>
+          </ReownProvider>
         </SessionProvider>
         <Analytics />
       </body>

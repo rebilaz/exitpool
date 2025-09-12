@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
+import bs58 from 'bs58';
+import { useAppKit } from '@reown/appkit/react';          // ✅ on utilise le hook pour ouvrir le modal
+import { ensureWCConnected, hardResetWC } from '@/lib/walletconnect';
 
 type Props = {
   isOpen: boolean;
@@ -15,10 +18,13 @@ export default function LoginModal({ isOpen, onClose }: Props) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
-  const [name, setName] = useState(''); // pour signup
+  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Hook AppKit (ouvre juste le sélecteur de wallet)
+  const { open } = useAppKit();
 
   useEffect(() => {
     if (!isOpen) {
@@ -41,16 +47,139 @@ export default function LoginModal({ isOpen, onClose }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tempUserId: temp }),
       });
-      if (res.ok) {
-        localStorage.removeItem('cp_temp_user_id');
+      if (res.ok) localStorage.removeItem('cp_temp_user_id');
+    } catch {}
+  };
+
+  // ---- EVM via WalletConnect (QR / extension) : connecte + signe + NextAuth ----
+  const loginEvmWithWalletConnect = async () => {
+    setErrorMsg(null);
+    setIsSubmitting(true);
+    try {
+      const provider = await ensureWCConnected();
+
+      const accounts = (await provider.request({ method: 'eth_accounts' })) as string[];
+      const address = accounts?.[0];
+      if (!address) throw new Error('Aucune adresse retournée par le wallet.');
+
+      const chainIdHex = (await provider.request({ method: 'eth_chainId' })) as string;
+      const chainId = parseInt(chainIdHex, 16) || 0;
+
+      const { nonce, token } = await fetch('/api/auth/nonce').then((r) => r.json());
+      const message =
+        `Sign-In with Ethereum (WalletConnect)\n` +
+        `nonce:${nonce}\naddr:${address}\nchain:${chainId}\nexp:${Date.now() + 5 * 60_000}`;
+
+      // Convertit en HEX (certains wallets l’exigent pour personal_sign)
+      const msgHex = '0x' + new TextEncoder()
+        .encode(message)
+        .reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
+
+      let signature: string | undefined;
+      try {
+        // personal_sign → params: [dataHex, address]
+        signature = (await provider.request({
+          method: 'personal_sign',
+          params: [msgHex, address],
+        })) as string;
+      } catch (err: any) {
+        if (err?.code === 4001) {
+          setErrorMsg('Signature annulée dans le wallet.');
+          return;
+        }
+        // Fallback: eth_sign → params: [address, dataHex]
+        signature = (await provider.request({
+          method: 'eth_sign',
+          params: [address, msgHex],
+        })) as string;
       }
-    } catch {
-      // no-op (le Header a aussi un fallback de migration au status=authenticated)
+      if (!signature) throw new Error('La signature a échoué via WalletConnect.');
+
+      const res = await signIn('wallet', {
+        redirect: false,
+        chainType: 'evm',
+        address,
+        chainId,
+        message,   // version lisible pour le backend
+        signature, // 0x…
+        nonce,
+        nonceToken: token,
+      });
+      if (res?.error) throw new Error(res.error);
+
+      await migrateTempIfAny();
+      router.refresh();
+      onClose?.();
+    } catch (e: any) {
+      if (String(e?.message || e).includes('No matching key')) {
+        setErrorMsg('Session WalletConnect instable (dev). Clique “Reset WalletConnect” puis réessaie.');
+        console.warn('[WC] history key mismatch → use hardResetWC() and retry.');
+      } else {
+        setErrorMsg(e?.message || 'Échec de la connexion via WalletConnect.');
+      }
+      console.error('[WalletConnect EVM]', e);
+      
+      // Debug: afficher plus d'infos sur l'erreur
+      if (typeof e === 'object' && e !== null) {
+        console.log('🔍 Error details:', {
+          name: e.name,
+          message: e.message,
+          code: e.code,
+          stack: e.stack?.split('\n').slice(0, 3)
+        });
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
+  // ---- Solana — Phantom (sans forcer le cluster) ----
+  const loginPhantom = async () => {
+    setErrorMsg(null);
+    try {
+      const sol = (window as any).solana;
+      if (!sol) throw new Error('Aucun wallet Phantom détecté.');
+
+      try { await sol.connect({ onlyIfTrusted: true }); } catch {}
+      const resp = await sol.connect();
+      const address: string = resp.publicKey?.toBase58?.() ?? resp.publicKey?.toString?.();
+      if (!address) throw new Error("Impossible d'obtenir l'adresse Phantom.");
+
+      const { nonce, token } = await fetch('/api/auth/nonce').then((r) => r.json());
+      const message =
+        `Sign-In with Solana (Phantom)\n` +
+        `nonce:${nonce}\naddr:${address}\nexp:${Date.now() + 5 * 60_000}`;
+
+      const encoded = new TextEncoder().encode(message);
+      const signed = await sol.signMessage(encoded, 'utf8');
+      const signature = bs58.encode(signed.signature);
+
+      const res = await signIn('wallet', {
+        redirect: false,
+        chainType: 'solana',
+        address,
+        message,
+        signature,
+        nonce,
+        nonceToken: token,
+      });
+      if (res?.error) throw new Error(res.error);
+
+      await migrateTempIfAny();
+      router.refresh();
+      onClose?.();
+    } catch (e: any) {
+      if (e?.code === 4001) {
+        setErrorMsg('Connexion ou signature annulée dans Phantom.');
+        return;
+      }
+      setErrorMsg(e?.message || 'Échec de la connexion Phantom.');
+      console.error('[loginPhantom]', e);
+    }
+  };
+
+  // ---- Google + email/mot de passe (existant) ----
   const handleGoogle = async () => {
-    // Pour Google, on laisse NextAuth gérer la redirection OAuth
     await signIn('google', { callbackUrl: '/' });
   };
 
@@ -66,7 +195,6 @@ export default function LoginModal({ isOpen, onClose }: Props) {
     setIsSubmitting(true);
     try {
       if (mode === 'signup') {
-        // 1) créer le compte
         const res = await fetch('/api/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -78,21 +206,10 @@ export default function LoginModal({ isOpen, onClose }: Props) {
         }
       }
 
-      // 2) se connecter via credentials (sans redirection)
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-      });
+      const result = await signIn('credentials', { email, password, redirect: false });
+      if (!result || result.error) throw new Error(result?.error || 'Échec de la connexion.');
 
-      if (!result || result.error) {
-        throw new Error(result?.error || 'Échec de la connexion.');
-      }
-
-      // 3) migration immédiate (même logique que Google)
       await migrateTempIfAny();
-
-      // 4) refresh UI + fermer
       router.refresh();
       onClose?.();
     } catch (err: any) {
@@ -101,6 +218,18 @@ export default function LoginModal({ isOpen, onClose }: Props) {
       setIsSubmitting(false);
     }
   };
+
+  const WCLogo = () => (
+    <svg width="18" height="18" viewBox="0 0 32 32" aria-hidden>
+      <path d="M6.5 12.5a8.9 8.9 0 0119 0l-2.5 2.1a6.1 6.1 0 00-14 0L6.5 12.5zm3.2 2.7l2.3 2a3.9 3.9 0 015 0l2.3-2 2.6 2.3-2.4 2.1a7 7 0 01-9 0l-2.4-2.1 2.6-2.3z" fill="currentColor"/>
+    </svg>
+  );
+  const PhantomLogo = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+      <rect width="24" height="24" rx="6" fill="#7C4DFF" />
+      <path d="M7 12c0-2.8 2.2-5 5-5s5 2.2 5 5-2.2 5-5 5h-2l-2 2v-2.5C7.8 15.6 7 13.9 7 12z" fill="white" />
+    </svg>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -121,7 +250,49 @@ export default function LoginModal({ isOpen, onClose }: Props) {
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
+          {/* Ouvrir juste le sélecteur de wallet (modal AppKit) */}
+          <button
+            type="button"
+            onClick={() => open?.()}        // ouvre le modal Reown/AppKit
+            className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-white border border-neutral-300 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+          >
+            <WCLogo />
+            Choisir un wallet (ouvrir le modal)
+          </button>
+
+          {/* EVM via WalletConnect (QR/extension) + signature → NextAuth */}
+          <button
+            type="button"
+            onClick={loginEvmWithWalletConnect}
+            disabled={isSubmitting}
+            className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-white border border-neutral-300 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+          >
+            <WCLogo />
+            Se connecter avec un wallet (QR / extension)
+          </button>
+          {/* Dev-only: bouton de reset WalletConnect */}
+          {process.env.NODE_ENV !== 'production' && (
+            <button
+              type="button"
+              onClick={async () => { await hardResetWC(); alert('WalletConnect reset. Réessaie.'); }}
+              className="w-full text-[11px] text-neutral-500 underline underline-offset-2"
+            >
+              Reset WalletConnect (dev)
+            </button>
+          )}
+
+          {/* Solana — Phantom */}
+          <button
+            type="button"
+            onClick={loginPhantom}
+            disabled={isSubmitting}
+            className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-white border border-neutral-300 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
+          >
+            <PhantomLogo />
+            Se connecter avec Phantom
+          </button>
+
           {/* Google */}
           <button
             type="button"
@@ -130,7 +301,7 @@ export default function LoginModal({ isOpen, onClose }: Props) {
             className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-white border border-neutral-300 text-sm font-medium text-neutral-900 hover:bg-neutral-50"
           >
             <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
-              <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.731 32.91 29.273 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.153 7.961 3.039l5.657-5.657C34.91 6.053 29.727 4 24 4 12.954 4 4 12.954 4 24s8.954 20 20 20 20-8.954 20-20c0-1.341-.138-2.651-.389-3.917z" />
+              <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.731 32.91 29.273 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.153 7.961 3.039l5.657-5.657C34.91 8.053 29.727 6 24 6c-7.399 0-13.733 4.005-17.694 8.691z" />
               <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.787 16.108 18.999 14 24 14c3.059 0 5.842 1.153 7.961 3.039l5.657-5.657C34.91 8.053 29.727 6 24 6c-7.399 0-13.733 4.005-17.694 8.691z" />
               <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.195l-6.19-5.238C29.273 36 24 36 24 36c-5.244 0-9.67-3.115-11.471-7.514l-6.54 5.036C9.909 39.873 16.431 44 24 44z" />
               <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-1.036 3.164-3.345 5.651-6.084 7.067l6.19 5.238C37.058 41.833 44 37 44 24c0-1.341-.138-2.651-.389-3.917z" />

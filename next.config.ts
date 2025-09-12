@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // ✅ à la racine, pas dans "experimental"
+  transpilePackages: [
+    "@reown/appkit",
+    "@walletconnect/ethereum-provider",
+    "@walletconnect/modal",
+  ],
 };
 
 export default nextConfig;

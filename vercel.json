@@ -1,0 +1,7 @@
+{
+  "crons": [
+    { "path": "/api/cron?secret=ta_phrase_secrete&slot=morning", "schedule": "0 9 * * *" },
+    { "path": "/api/cron?secret=ta_phrase_secrete&slot=afternoon", "schedule": "0 15 * * *" },
+    { "path": "/api/cron?secret=ta_phrase_secrete&slot=evening", "schedule": "0 21 * * *" }
+  ]
+}

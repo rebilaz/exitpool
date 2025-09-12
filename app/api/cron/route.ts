@@ -29,7 +29,21 @@ function ymd(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
-export async function GET() {
+// --- auth: accepte Vercel Cron OU Bearer secret ---
+function isAuthorized(req: Request) {
+  const fromVercelCron = !!req.headers.get("x-vercel-cron"); // présent sur les invocations cron natives
+  const secret = process.env.CRON_SECRET;
+  if (fromVercelCron) return true; // laisse passer le cron Vercel quotidien
+  if (!secret) return true; // si pas de secret défini, on laisse (dev local)
+  const auth = req.headers.get("authorization");
+  return auth === `Bearer ${secret}`;
+}
+
+export async function GET(req: Request) {
+  if (!isAuthorized(req)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const now = nowWithOffset(TZ_OFFSET);
   const hour = now.getUTCHours();
   const dateKey = ymd(now);

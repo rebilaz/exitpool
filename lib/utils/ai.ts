@@ -8,7 +8,6 @@ import {
 } from "./prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-// Permet de surcharger facilement si un modèle n’est pas autorisé sur le projet
 const CHAT_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 export function makeSeed(slotKey: string) {
@@ -19,16 +18,16 @@ export function makeSeed(slotKey: string) {
   );
 }
 
-// ---------- PASS 1: generators (renvoient des JSON plans) ----------
+// ---------- PASS 1: generators ----------
 export async function buildTweetPlan(slotKey: string) {
   const seed = makeSeed(slotKey);
   const r = await openai.chat.completions.create({
     model: CHAT_MODEL,
-    temperature: 1.15,
+    temperature: 0.8,
     top_p: 0.9,
     messages: [
       { role: "system", content: TWEET_PROMPT_SYSTEM },
-      { role: "user", content: `SEED=${seed}\nContrainte: variété et autonomie.` },
+      { role: "user", content: `SEED=${seed}\nContrainte: 0-1 hashtag autorisé.` },
     ],
     response_format: { type: "json_object" },
   });
@@ -39,11 +38,11 @@ export async function buildThreadPlan(slotKey: string) {
   const seed = makeSeed(slotKey);
   const r = await openai.chat.completions.create({
     model: CHAT_MODEL,
-    temperature: 1.05,
+    temperature: 0.8,
     top_p: 0.9,
     messages: [
       { role: "system", content: THREAD_PROMPT_SYSTEM },
-      { role: "user", content: `SEED=${seed}\nContrainte: 4 à 5 points utiles.` },
+      { role: "user", content: `SEED=${seed}\nContrainte: 4 à 5 points concrets.` },
     ],
     response_format: { type: "json_object" },
   });
@@ -54,27 +53,31 @@ export async function buildImagePlan(slotKey: string) {
   const seed = makeSeed(slotKey);
   const r = await openai.chat.completions.create({
     model: CHAT_MODEL,
-    temperature: 1.2,
+    temperature: 0.9,
     top_p: 0.9,
     messages: [
       { role: "system", content: IMAGE_PROMPT_SYSTEM },
-      { role: "user", content: `SEED=${seed}\nContrainte: caption FR ≤220c.` },
+      { role: "user", content: `SEED=${seed}\nContrainte: caption FR ≤220c, 0 hashtag.` },
     ],
     response_format: { type: "json_object" },
   });
   return JSON.parse(r.choices[0]?.message?.content ?? "{}");
 }
 
-// ---------- PASS 2: réalisations à partir des plans ----------
+// ---------- PASS 2: réalisations ----------
 export async function realizeSingleTweet(plan: any) {
   const sys = `
-Tu es "CryptoPilot Writer". Écris un tweet (≤280c), FR, semi-pro, 0–1 emoji, 0–2 hashtags,
-hook concis + insight utile, pas de hype/promo, autonome.
+Tu es "CryptoPilot Writer".
+Écris un tweet FR ≤280c, neutre, concret, pédagogique.
+Interdits: hype/promo/superlatifs, promesses de gains, liens, emojis.
+0–1 hashtag max (#IA, #Crypto, #OnChain) uniquement si utile.
+Structure: <hook> <observation> <tip> <hashtag?>. Ton non-marketing.
+
 Retourne JSON: { "tweet": string }`;
-  const usr = `Plan: ${JSON.stringify(plan)}`;
+  const usr = `Plan JSON: ${JSON.stringify(plan)}`;
   const r = await openai.chat.completions.create({
     model: CHAT_MODEL,
-    temperature: 1.0,
+    temperature: 0.6,
     top_p: 0.9,
     messages: [
       { role: "system", content: sys },
@@ -88,13 +91,16 @@ Retourne JSON: { "tweet": string }`;
 
 export async function realizeThread(plan: any) {
   const sys = `
-Tu es "CryptoPilot Writer". Rédige un thread FR de 4–5 tweets (≤280c chacun),
-numérotés "1/5", "2/5"... Ton: narratif + pédagogique, semi-pro, 0–1 emoji/tweet max, 0–2 hashtags max.
+Tu es "CryptoPilot Writer".
+Rédige un thread FR de 4–5 tweets (≤280c chacun), numérotés "1/5", "2/5"...
+Ton: neutre et pédagogique. 0–1 hashtag total (#IA, #Crypto, #OnChain).
+Interdits: hype/promo/superlatifs, liens.
+
 Retourne JSON: { "tweets": string[] }`;
-  const usr = `Plan: ${JSON.stringify(plan)}`;
+  const usr = `Plan JSON: ${JSON.stringify(plan)}`;
   const r = await openai.chat.completions.create({
     model: CHAT_MODEL,
-    temperature: 1.0,
+    temperature: 0.6,
     top_p: 0.9,
     messages: [
       { role: "system", content: sys },
@@ -106,7 +112,7 @@ Retourne JSON: { "tweets": string[] }`;
   return (out.tweets as string[] | undefined) ?? [];
 }
 
-// ---------- Image buffer depuis gpt-image-1 ----------
+// ---------- Image buffer ----------
 export async function generateImageBuffer(imagePrompt: string) {
   const img = await openai.images.generate({
     model: "gpt-image-1",

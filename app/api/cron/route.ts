@@ -18,6 +18,7 @@ import {
   checkXWrite,
 } from "@/lib/utils/twitter";
 import { ensureUnique } from "@/lib/utils/unique";
+import { sanitizeTweet } from "@/lib/utils/sanitize";
 import { log, maskEnvSummary } from "@/lib/utils/logger";
 
 const TZ_OFFSET = 0; // UTC offset (ex: -3 pour Buenos Aires si tu veux raisonner en local)
@@ -141,6 +142,7 @@ export async function GET(req: Request) {
       const slotKey = `${dateKey}::tweet-forced`;
       const plan = await buildTweetPlan(slotKey);
       let text = url.searchParams.get("text") || (await realizeSingleTweet(plan));
+      if (text) text = sanitizeTweet(text);
 
       if (!text) {
         return NextResponse.json({
@@ -347,7 +349,8 @@ export async function GET(req: Request) {
     if (SIMPLE_SLOTS.includes(hour)) {
       const slotKey = `${dateKey}::tweet-${hour}`;
       const plan = await buildTweetPlan(slotKey);
-      const text = await realizeSingleTweet(plan);
+      const textRaw = await realizeSingleTweet(plan);
+      const text = textRaw ? sanitizeTweet(textRaw) : undefined;
 
       if (!text) {
         return NextResponse.json({

@@ -21,7 +21,7 @@ import { ensureUnique } from "@/lib/utils/unique";
 import { log, maskEnvSummary } from "@/lib/utils/logger";
 
 const TZ_OFFSET = 0; // UTC offset (ex: -3 pour Buenos Aires si tu veux raisonner en local)
-const SIMPLE_SLOTS = [10, 13, 16, 19]; // UTC
+const SIMPLE_SLOTS = [10, 13, 16, 19]; // UTC (tweets simples)
 const THREAD_SLOT = 21; // UTC
 const IMAGE_SLOT = 14; // UTC
 
@@ -36,15 +36,19 @@ function ymd(d: Date) {
 
 function isAuthorized(req: Request) {
   const url = new URL(req.url);
-  if (url.searchParams.get("health") === "1") return true; // health bypass
-  if (url.searchParams.get("check") === "x") return true;  // check X bypass
-  if (url.searchParams.get("diag") === "x") return true;   // diag bypass
 
+  // Bypass pour les endpoints de diagnostic
+  if (url.searchParams.get("health") === "1") return true;
+  if (url.searchParams.get("check") === "x") return true;
+  if (url.searchParams.get("diag") === "x") return true;
+
+  // Appel par Vercel Cron
   const fromVercelCron = !!req.headers.get("x-vercel-cron");
   if (fromVercelCron) return true;
 
+  // Auth Bearer facultative (si CRON_SECRET défini)
   const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // si pas de secret défini, on n'exige pas d'auth
+  if (!secret) return true;
   const auth = req.headers.get("authorization");
   return auth === `Bearer ${secret}`;
 }
@@ -59,12 +63,12 @@ export async function GET(req: Request) {
     const dry = url.searchParams.get("dry") === "1";
     const health = url.searchParams.get("health") === "1";
 
-    // --- /api/cron?health=1 : check basique des env (masquées)
+    // --- /api/cron?health=1 : état des ENV (masquées)
     if (health) {
       return NextResponse.json({ ok: true, env: maskEnvSummary() });
     }
 
-    // --- /api/cron?check=x : sanity-check Twitter (ne publie rien)
+    // --- /api/cron?check=x : sanity-check Twitter (lecture seule)
     if (url.searchParams.get("check") === "x") {
       try {
         const me = await checkXWrite();
@@ -87,6 +91,7 @@ export async function GET(req: Request) {
     // --- /api/cron?diag=x[&write=1] : diag X (+ tentative d’écriture si write=1 et pas dry)
     if (url.searchParams.get("diag") === "x") {
       const info: Record<string, any> = { env: maskEnvSummary() };
+
       try {
         const me = await checkXWrite();
         info.account = me;
@@ -98,6 +103,7 @@ export async function GET(req: Request) {
           data: e?.data,
         };
       }
+
       const attemptWrite = url.searchParams.get("write") === "1" && !dry;
       if (attemptWrite) {
         try {
@@ -113,10 +119,16 @@ export async function GET(req: Request) {
           };
         }
       }
+
       log("X DIAG", info); // visible dans Vercel Logs
-      return NextResponse.json({ ok: true, diag: info, wrote: attemptWrite || false });
+      return NextResponse.json({
+        ok: true,
+        diag: info,
+        wrote: attemptWrite || false,
+      });
     }
 
+    // ----- Horodatage / clés de slot
     const now = nowWithOffset(TZ_OFFSET);
     const hour = now.getUTCHours();
     const dateKey = ymd(now);
@@ -124,6 +136,7 @@ export async function GET(req: Request) {
     // ========== FORCE MODE ==========
     // /api/cron?force=tweet|thread|image[&dry=1]
     const force = url.searchParams.get("force");
+
     if (force === "tweet") {
       const slotKey = `${dateKey}::tweet-forced`;
       const plan = await buildTweetPlan(slotKey);
@@ -158,6 +171,7 @@ export async function GET(req: Request) {
           plan,
         });
       }
+
       const id = await postTweet(text);
       return NextResponse.json({ ok: true, type: "tweet", forced: true, id, text });
     }
@@ -189,6 +203,7 @@ export async function GET(req: Request) {
           plan,
         });
       }
+
       const id = await postThread(filtered);
       return NextResponse.json({
         ok: true,
@@ -234,6 +249,7 @@ export async function GET(req: Request) {
           plan,
         });
       }
+
       const buf = await generateImageBuffer(imagePrompt);
       const id = await postImageTweet(caption, buf);
       return NextResponse.json({ ok: true, type: "image", forced: true, id, caption });
@@ -258,13 +274,13 @@ export async function GET(req: Request) {
       );
     }
 
-    // ----- Tweet simple -----
+    // ----- Tweet simple (slots) -----
     if (SIMPLE_SLOTS.includes(hour)) {
       const slotKey = `${dateKey}::tweet-${hour}`;
       const plan = await buildTweetPlan(slotKey);
       const text = await realizeSingleTweet(plan);
 
-      if (!text)
+      if (!text) {
         return NextResponse.json({
           ok: true,
           type: "tweet",
@@ -273,7 +289,8 @@ export async function GET(req: Request) {
           reason: "no text",
           plan,
         });
-      if (!ensureUnique(text))
+      }
+      if (!ensureUnique(text)) {
         return NextResponse.json({
           ok: true,
           type: "tweet",
@@ -281,7 +298,8 @@ export async function GET(req: Request) {
           skipped: true,
           reason: "duplicate",
         });
-      if (dry)
+      }
+      if (dry) {
         return NextResponse.json({
           ok: true,
           type: "tweet",
@@ -290,12 +308,13 @@ export async function GET(req: Request) {
           preview: text,
           plan,
         });
+      }
 
       const id = await postTweet(text);
       return NextResponse.json({ ok: true, type: "tweet", hour, id, text });
     }
 
-    // ----- Thread -----
+    // ----- Thread (slot) -----
     if (hour === THREAD_SLOT) {
       const slotKey = `${dateKey}::thread-${hour}`;
       const plan = await buildThreadPlan(slotKey);
@@ -313,7 +332,7 @@ export async function GET(req: Request) {
           plan,
         });
       }
-      if (dry)
+      if (dry) {
         return NextResponse.json({
           ok: true,
           type: "thread",
@@ -322,6 +341,7 @@ export async function GET(req: Request) {
           preview: filtered,
           plan,
         });
+      }
 
       const id = await postThread(filtered);
       return NextResponse.json({
@@ -333,7 +353,7 @@ export async function GET(req: Request) {
       });
     }
 
-    // ----- Image -----
+    // ----- Image (slot) -----
     if (hour === IMAGE_SLOT) {
       const slotKey = `${dateKey}::image-${hour}`;
       const plan = await buildImagePlan(slotKey);
@@ -375,6 +395,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, type: "image", hour, id, caption });
     }
 
+    // Rien de prévu
     return NextResponse.json({
       ok: true,
       hour,

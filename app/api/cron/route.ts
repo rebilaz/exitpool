@@ -37,16 +37,16 @@ function ymd(d: Date) {
 function isAuthorized(req: Request) {
   const url = new URL(req.url);
 
-  // Bypass pour les endpoints de diagnostic
+  // bypass pour diagnostic
   if (url.searchParams.get("health") === "1") return true;
   if (url.searchParams.get("check") === "x") return true;
   if (url.searchParams.get("diag") === "x") return true;
 
-  // Appel par Vercel Cron
+  // appel automatique Vercel Cron
   const fromVercelCron = !!req.headers.get("x-vercel-cron");
   if (fromVercelCron) return true;
 
-  // Auth Bearer facultative (si CRON_SECRET défini)
+  // auth bearer optionnelle
   const secret = process.env.CRON_SECRET;
   if (!secret) return true;
   const auth = req.headers.get("authorization");
@@ -63,12 +63,12 @@ export async function GET(req: Request) {
     const dry = url.searchParams.get("dry") === "1";
     const health = url.searchParams.get("health") === "1";
 
-    // --- /api/cron?health=1 : état des ENV (masquées)
+    // /api/cron?health=1 : etat des env (masquees)
     if (health) {
       return NextResponse.json({ ok: true, env: maskEnvSummary() });
     }
 
-    // --- /api/cron?check=x : sanity-check Twitter (lecture seule)
+    // /api/cron?check=x : sanity check X (lecture)
     if (url.searchParams.get("check") === "x") {
       try {
         const me = await checkXWrite();
@@ -88,7 +88,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // --- /api/cron?diag=x[&write=1] : diag X (+ tentative d’écriture si write=1 et pas dry)
+    // /api/cron?diag=x[&write=1] : diag X (+ tentative d ecriture controlee)
     if (url.searchParams.get("diag") === "x") {
       const info: Record<string, any> = { env: maskEnvSummary() };
 
@@ -120,7 +120,7 @@ export async function GET(req: Request) {
         }
       }
 
-      log("X DIAG", info); // visible dans Vercel Logs
+      log("X DIAG", info);
       return NextResponse.json({
         ok: true,
         diag: info,
@@ -128,19 +128,19 @@ export async function GET(req: Request) {
       });
     }
 
-    // ----- Horodatage / clés de slot
+    // horodatage
     const now = nowWithOffset(TZ_OFFSET);
     const hour = now.getUTCHours();
     const dateKey = ymd(now);
 
     // ========== FORCE MODE ==========
-    // /api/cron?force=tweet|thread|image[&dry=1]
+    // /api/cron?force=tweet|thread|image[&dry=1][&tweak=1][&text=...]
     const force = url.searchParams.get("force");
 
     if (force === "tweet") {
       const slotKey = `${dateKey}::tweet-forced`;
       const plan = await buildTweetPlan(slotKey);
-      const text = await realizeSingleTweet(plan);
+      let text = url.searchParams.get("text") || (await realizeSingleTweet(plan));
 
       if (!text) {
         return NextResponse.json({
@@ -158,9 +158,17 @@ export async function GET(req: Request) {
           type: "tweet",
           forced: true,
           skipped: true,
-          reason: "duplicate",
+          reason: "duplicate (ensureUnique)",
+          preview: text,
         });
       }
+
+      // variation optionnelle anti-duplicate demandee
+      const tweak = url.searchParams.get("tweak") === "1";
+      if (tweak) {
+        text = `${text} - ${Math.random().toString(36).slice(2, 6)}`;
+      }
+
       if (dry) {
         return NextResponse.json({
           ok: true,
@@ -172,8 +180,31 @@ export async function GET(req: Request) {
         });
       }
 
-      const id = await postTweet(text);
-      return NextResponse.json({ ok: true, type: "tweet", forced: true, id, text });
+      try {
+        const id = await postTweet(text);
+        return NextResponse.json({
+          ok: true,
+          type: "tweet",
+          forced: true,
+          id,
+          text,
+        });
+      } catch (e: any) {
+        // surface l erreur X pour debug precis
+        return NextResponse.json(
+          {
+            ok: false,
+            type: "tweet",
+            forced: true,
+            message: e?.message,
+            status: e?.status,
+            code: e?.code,
+            data: e?.data,
+            errors: e?.data?.errors,
+          },
+          { status: 500 }
+        );
+      }
     }
 
     if (force === "thread") {
@@ -204,14 +235,30 @@ export async function GET(req: Request) {
         });
       }
 
-      const id = await postThread(filtered);
-      return NextResponse.json({
-        ok: true,
-        type: "thread",
-        forced: true,
-        id,
-        count: filtered.length,
-      });
+      try {
+        const id = await postThread(filtered);
+        return NextResponse.json({
+          ok: true,
+          type: "thread",
+          forced: true,
+          id,
+          count: filtered.length,
+        });
+      } catch (e: any) {
+        return NextResponse.json(
+          {
+            ok: false,
+            type: "thread",
+            forced: true,
+            message: e?.message,
+            status: e?.status,
+            code: e?.code,
+            data: e?.data,
+            errors: e?.data?.errors,
+          },
+          { status: 500 }
+        );
+      }
     }
 
     if (force === "image") {
@@ -250,13 +297,35 @@ export async function GET(req: Request) {
         });
       }
 
-      const buf = await generateImageBuffer(imagePrompt);
-      const id = await postImageTweet(caption, buf);
-      return NextResponse.json({ ok: true, type: "image", forced: true, id, caption });
+      try {
+        const buf = await generateImageBuffer(imagePrompt);
+        const id = await postImageTweet(caption, buf);
+        return NextResponse.json({
+          ok: true,
+          type: "image",
+          forced: true,
+          id,
+          caption,
+        });
+      } catch (e: any) {
+        return NextResponse.json(
+          {
+            ok: false,
+            type: "image",
+            forced: true,
+            message: e?.message,
+            status: e?.status,
+            code: e?.code,
+            data: e?.data,
+            errors: e?.data?.errors,
+          },
+          { status: 500 }
+        );
+      }
     }
     // ========== /FORCE MODE ==========
 
-    // (optionnel) fail-fast si credentials X manquants (sauf en dry-run)
+    // fail fast si credentials X manquants (sauf en dry-run)
     const missingTwitter =
       !process.env.X_API_KEY ||
       !process.env.X_API_KEY_SECRET ||
@@ -274,7 +343,7 @@ export async function GET(req: Request) {
       );
     }
 
-    // ----- Tweet simple (slots) -----
+    // ----- tweet simple (slots) -----
     if (SIMPLE_SLOTS.includes(hour)) {
       const slotKey = `${dateKey}::tweet-${hour}`;
       const plan = await buildTweetPlan(slotKey);
@@ -314,7 +383,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, type: "tweet", hour, id, text });
     }
 
-    // ----- Thread (slot) -----
+    // ----- thread (slot) -----
     if (hour === THREAD_SLOT) {
       const slotKey = `${dateKey}::thread-${hour}`;
       const plan = await buildThreadPlan(slotKey);
@@ -353,7 +422,7 @@ export async function GET(req: Request) {
       });
     }
 
-    // ----- Image (slot) -----
+    // ----- image (slot) -----
     if (hour === IMAGE_SLOT) {
       const slotKey = `${dateKey}::image-${hour}`;
       const plan = await buildImagePlan(slotKey);
@@ -395,16 +464,16 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, type: "image", hour, id, caption });
     }
 
-    // Rien de prévu
+    // rien de prevu a cette heure
     return NextResponse.json({
       ok: true,
       hour,
-      message: "Aucune action prévue cette heure.",
+      message: "Aucune action prevue cette heure.",
     });
   } catch (err: any) {
     log("Cron error", { msg: err?.message, status: err?.status, data: err?.data });
 
-    // Aide au diagnostic si l’erreur vient de X
+    // aide au diagnostic si ca vient de X
     const hostHint =
       err?.host || (err?.message?.includes("twitter") ? "api.x.com" : undefined);
 
@@ -413,7 +482,7 @@ export async function GET(req: Request) {
         {
           ok: false,
           hint:
-            "Twitter/X: vérifie Read+Write, régénère Access Token/Secret, et assure-toi que Vercel utilise bien les nouveaux secrets. Voir logs [TWITTER] pour le détail.",
+            "Twitter/X: verifie Read+Write, regenere Access Token/Secret, et assure-toi que Vercel utilise bien les nouveaux secrets. Voir logs [TWITTER] pour le detail.",
           details: err?.data || err?.message,
         },
         { status: 500 }

@@ -8,6 +8,7 @@ import {
 } from "./prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+// Allow override if a model isn't enabled
 const CHAT_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 export function makeSeed(slotKey: string) {
@@ -18,7 +19,7 @@ export function makeSeed(slotKey: string) {
   );
 }
 
-// ---------- PASS 1: generators ----------
+// ---------- PASS 1: planners (return JSON plans) ----------
 export async function buildTweetPlan(slotKey: string) {
   const seed = makeSeed(slotKey);
   const r = await openai.chat.completions.create({
@@ -27,7 +28,7 @@ export async function buildTweetPlan(slotKey: string) {
     top_p: 0.9,
     messages: [
       { role: "system", content: TWEET_PROMPT_SYSTEM },
-      { role: "user", content: `SEED=${seed}\nContrainte: 0-1 hashtag autorisé.` },
+      { role: "user", content: `SEED=${seed}\nConstraint: 0–1 allowed hashtag.` },
     ],
     response_format: { type: "json_object" },
   });
@@ -42,7 +43,7 @@ export async function buildThreadPlan(slotKey: string) {
     top_p: 0.9,
     messages: [
       { role: "system", content: THREAD_PROMPT_SYSTEM },
-      { role: "user", content: `SEED=${seed}\nContrainte: 4 à 5 points concrets.` },
+      { role: "user", content: `SEED=${seed}\nConstraint: 4–5 concrete points.` },
     ],
     response_format: { type: "json_object" },
   });
@@ -57,23 +58,23 @@ export async function buildImagePlan(slotKey: string) {
     top_p: 0.9,
     messages: [
       { role: "system", content: IMAGE_PROMPT_SYSTEM },
-      { role: "user", content: `SEED=${seed}\nContrainte: caption FR ≤220c, 0 hashtag.` },
+      { role: "user", content: `SEED=${seed}\nConstraint: EN caption <=220c, 0 hashtag.` },
     ],
     response_format: { type: "json_object" },
   });
   return JSON.parse(r.choices[0]?.message?.content ?? "{}");
 }
 
-// ---------- PASS 2: réalisations ----------
+// ---------- PASS 2: realizations ----------
 export async function realizeSingleTweet(plan: any) {
   const sys = `
-Tu es "CryptoPilot Writer".
-Écris un tweet FR ≤280c, neutre, concret, pédagogique.
-Interdits: hype/promo/superlatifs, promesses de gains, liens, emojis.
-0–1 hashtag max (#IA, #Crypto, #OnChain) uniquement si utile.
-Structure: <hook> <observation> <tip> <hashtag?>. Ton non-marketing.
+You are "CryptoPilot Writer".
+Write an EN tweet (<=280c), neutral, practical, educational.
+No hype/promo/superlatives, no profit claims, no links, no emojis.
+0–1 hashtag max, only if useful: #AI / #Crypto / #OnChain.
+Assemble: <hook> <observation> <tip> <hashtag?>. Non-marketing tone.
 
-Retourne JSON: { "tweet": string }`;
+Return JSON: { "tweet": string }`;
   const usr = `Plan JSON: ${JSON.stringify(plan)}`;
   const r = await openai.chat.completions.create({
     model: CHAT_MODEL,
@@ -91,12 +92,12 @@ Retourne JSON: { "tweet": string }`;
 
 export async function realizeThread(plan: any) {
   const sys = `
-Tu es "CryptoPilot Writer".
-Rédige un thread FR de 4–5 tweets (≤280c chacun), numérotés "1/5", "2/5"...
-Ton: neutre et pédagogique. 0–1 hashtag total (#IA, #Crypto, #OnChain).
-Interdits: hype/promo/superlatifs, liens.
+You are "CryptoPilot Writer".
+Write an EN thread of 4–5 tweets (<=280c each), numbered "1/5", "2/5"...
+Tone: neutral and educational. 0–1 hashtag total (#AI/#Crypto/#OnChain).
+No hype/promo/links.
 
-Retourne JSON: { "tweets": string[] }`;
+Return JSON: { "tweets": string[] }`;
   const usr = `Plan JSON: ${JSON.stringify(plan)}`;
   const r = await openai.chat.completions.create({
     model: CHAT_MODEL,
@@ -112,7 +113,7 @@ Retourne JSON: { "tweets": string[] }`;
   return (out.tweets as string[] | undefined) ?? [];
 }
 
-// ---------- Image buffer ----------
+// ---------- Image buffer (gpt-image-1) ----------
 export async function generateImageBuffer(imagePrompt: string) {
   const img = await openai.images.generate({
     model: "gpt-image-1",
@@ -121,7 +122,7 @@ export async function generateImageBuffer(imagePrompt: string) {
     quality: "high",
   });
   const url = img.data?.[0]?.url;
-  if (!img.data || !url) throw new Error("Image URL manquante");
+  if (!img.data || !url) throw new Error("Image URL missing");
   const res = await fetch(url);
   const buf = Buffer.from(await res.arrayBuffer());
   return buf;

@@ -14,14 +14,6 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Debug CRON_URL
-        env:
-          URL: ${{ secrets.CRON_URL }}
-        run: |
-          echo "🔎 Debugging CRON_URL"
-          echo "len=$(printf '%s' "$URL" | wc -c)"
-          printf '%s' "$URL" | hexdump -C
-
       - name: Call /api/cron
         env:
           URL: ${{ secrets.CRON_URL }}

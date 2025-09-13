@@ -8,6 +8,8 @@ import {
 } from "./prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+// Permet de surcharger facilement si un modèle n’est pas autorisé sur le projet
+const CHAT_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 export function makeSeed(slotKey: string) {
   const salt = process.env.RANDOM_SALT || "cryptopilot-salt";
@@ -21,7 +23,7 @@ export function makeSeed(slotKey: string) {
 export async function buildTweetPlan(slotKey: string) {
   const seed = makeSeed(slotKey);
   const r = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
+    model: CHAT_MODEL,
     temperature: 1.15,
     top_p: 0.9,
     messages: [
@@ -36,7 +38,7 @@ export async function buildTweetPlan(slotKey: string) {
 export async function buildThreadPlan(slotKey: string) {
   const seed = makeSeed(slotKey);
   const r = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
+    model: CHAT_MODEL,
     temperature: 1.05,
     top_p: 0.9,
     messages: [
@@ -51,7 +53,7 @@ export async function buildThreadPlan(slotKey: string) {
 export async function buildImagePlan(slotKey: string) {
   const seed = makeSeed(slotKey);
   const r = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
+    model: CHAT_MODEL,
     temperature: 1.2,
     top_p: 0.9,
     messages: [
@@ -71,7 +73,7 @@ hook concis + insight utile, pas de hype/promo, autonome.
 Retourne JSON: { "tweet": string }`;
   const usr = `Plan: ${JSON.stringify(plan)}`;
   const r = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
+    model: CHAT_MODEL,
     temperature: 1.0,
     top_p: 0.9,
     messages: [
@@ -91,7 +93,7 @@ numérotés "1/5", "2/5"... Ton: narratif + pédagogique, semi-pro, 0–1 emoji/
 Retourne JSON: { "tweets": string[] }`;
   const usr = `Plan: ${JSON.stringify(plan)}`;
   const r = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
+    model: CHAT_MODEL,
     temperature: 1.0,
     top_p: 0.9,
     messages: [

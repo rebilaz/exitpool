@@ -11,7 +11,12 @@ import {
   realizeThread,
   generateImageBuffer,
 } from "@/lib/utils/ai";
-import { postTweet, postThread, postImageTweet } from "@/lib/utils/twitter";
+import {
+  postTweet,
+  postThread,
+  postImageTweet,
+  checkXWrite,
+} from "@/lib/utils/twitter";
 import { ensureUnique } from "@/lib/utils/unique";
 
 const TZ_OFFSET = 0;
@@ -51,7 +56,7 @@ export async function GET(req: Request) {
     const dry = url.searchParams.get("dry") === "1";
     const health = url.searchParams.get("health") === "1";
 
-    // --- /api/cron?health=1 : check des env avec TES noms ---
+    // --- /api/cron?health=1 : check basique des env
     if (health) {
       const ok = (v: any) => typeof v === "string" && v.length > 0;
       return NextResponse.json({
@@ -68,7 +73,27 @@ export async function GET(req: Request) {
       });
     }
 
-    // (optionnel) fail-fast si credentials manquants (sauf en dry-run)
+    // --- /api/cron?check=x : sanity-check de l'auth X sans publier
+    if (url.searchParams.get("check") === "x") {
+      try {
+        const me = await checkXWrite();
+        return NextResponse.json({ ok: true, x: me });
+      } catch (e: any) {
+        console.error("X check failed:", {
+          status: e?.status,
+          code: e?.code,
+          data: e?.data,
+          errors: e?.data?.errors,
+          message: e?.message,
+        });
+        return NextResponse.json(
+          { ok: false, x_error: e?.data || e?.message },
+          { status: 500 }
+        );
+      }
+    }
+
+    // (optionnel) fail-fast si credentials X manquants (sauf en dry-run)
     const missingTwitter =
       !process.env.X_API_KEY ||
       !process.env.X_API_KEY_SECRET ||
@@ -77,7 +102,11 @@ export async function GET(req: Request) {
 
     if (missingTwitter && !dry) {
       return NextResponse.json(
-        { ok: false, error: "Twitter credentials missing (X_API_KEY/SECRET, ACCESS_TOKEN/SECRET)" },
+        {
+          ok: false,
+          error:
+            "Twitter credentials missing (X_API_KEY/SECRET, ACCESS_TOKEN/SECRET)",
+        },
         { status: 503 }
       );
     }
@@ -92,9 +121,32 @@ export async function GET(req: Request) {
       const plan = await buildTweetPlan(slotKey);
       const text = await realizeSingleTweet(plan);
 
-      if (!text) return NextResponse.json({ ok: true, type: "tweet", hour, skipped: true, reason: "no text", plan });
-      if (!ensureUnique(text)) return NextResponse.json({ ok: true, type: "tweet", hour, skipped: true, reason: "duplicate" });
-      if (dry) return NextResponse.json({ ok: true, type: "tweet", hour, dry: true, preview: text, plan });
+      if (!text)
+        return NextResponse.json({
+          ok: true,
+          type: "tweet",
+          hour,
+          skipped: true,
+          reason: "no text",
+          plan,
+        });
+      if (!ensureUnique(text))
+        return NextResponse.json({
+          ok: true,
+          type: "tweet",
+          hour,
+          skipped: true,
+          reason: "duplicate",
+        });
+      if (dry)
+        return NextResponse.json({
+          ok: true,
+          type: "tweet",
+          hour,
+          dry: true,
+          preview: text,
+          plan,
+        });
 
       const id = await postTweet(text);
       return NextResponse.json({ ok: true, type: "tweet", hour, id, text });
@@ -108,12 +160,34 @@ export async function GET(req: Request) {
       const filtered = tweets.filter((t) => t && ensureUnique(t));
 
       if (filtered.length < 4) {
-        return NextResponse.json({ ok: true, type: "thread", hour, skipped: true, reason: "too few tweets", preview: filtered, plan });
+        return NextResponse.json({
+          ok: true,
+          type: "thread",
+          hour,
+          skipped: true,
+          reason: "too few tweets",
+          preview: filtered,
+          plan,
+        });
       }
-      if (dry) return NextResponse.json({ ok: true, type: "thread", hour, dry: true, preview: filtered, plan });
+      if (dry)
+        return NextResponse.json({
+          ok: true,
+          type: "thread",
+          hour,
+          dry: true,
+          preview: filtered,
+          plan,
+        });
 
       const id = await postThread(filtered);
-      return NextResponse.json({ ok: true, type: "thread", hour, id, count: filtered.length });
+      return NextResponse.json({
+        ok: true,
+        type: "thread",
+        hour,
+        id,
+        count: filtered.length,
+      });
     }
 
     // ----- Image -----
@@ -124,13 +198,33 @@ export async function GET(req: Request) {
       const imagePrompt = plan.image_prompt as string | undefined;
 
       if (!caption || !imagePrompt) {
-        return NextResponse.json({ ok: true, type: "image", hour, skipped: true, reason: "plan incomplete", plan });
+        return NextResponse.json({
+          ok: true,
+          type: "image",
+          hour,
+          skipped: true,
+          reason: "plan incomplete",
+          plan,
+        });
       }
       if (!ensureUnique(caption)) {
-        return NextResponse.json({ ok: true, type: "image", hour, skipped: true, reason: "duplicate caption" });
+        return NextResponse.json({
+          ok: true,
+          type: "image",
+          hour,
+          skipped: true,
+          reason: "duplicate caption",
+        });
       }
       if (dry) {
-        return NextResponse.json({ ok: true, type: "image", hour, dry: true, preview: { caption, imagePrompt }, plan });
+        return NextResponse.json({
+          ok: true,
+          type: "image",
+          hour,
+          dry: true,
+          preview: { caption, imagePrompt },
+          plan,
+        });
       }
 
       const buf = await generateImageBuffer(imagePrompt);
@@ -141,6 +235,25 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, hour, message: "Aucune action prévue cette heure." });
   } catch (err: any) {
     console.error("Cron error:", err);
-    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 500 });
+    // branches utiles si l’erreur vient d’X (403)
+    const hostHint =
+      err?.host || (err?.message?.includes("twitter") ? "api.x.com" : undefined);
+
+    if (err?.status === 403 || hostHint === "api.x.com") {
+      return NextResponse.json(
+        {
+          ok: false,
+          hint:
+            "403 Twitter/X: vérifie que l’app est en Read+Write et que les tokens ont été régénérés après le changement. Possible aussi: plan/endpoint non autorisé ou contenu dupliqué.",
+          details: err?.data || err?.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(
+      { ok: false, error: String(err?.message || err) },
+      { status: 500 }
+    );
   }
 }

@@ -18,6 +18,7 @@ import {
   checkXWrite,
 } from "@/lib/utils/twitter";
 import { ensureUnique } from "@/lib/utils/unique";
+import { log, maskEnvSummary } from "@/lib/utils/logger";
 
 const TZ_OFFSET = 0; // UTC offset (ex: -3 pour Buenos Aires si tu veux raisonner en local)
 const SIMPLE_SLOTS = [10, 13, 16, 19]; // UTC
@@ -36,7 +37,8 @@ function ymd(d: Date) {
 function isAuthorized(req: Request) {
   const url = new URL(req.url);
   if (url.searchParams.get("health") === "1") return true; // health bypass
-  if (url.searchParams.get("check") === "x") return true; // check X bypass
+  if (url.searchParams.get("check") === "x") return true;  // check X bypass
+  if (url.searchParams.get("diag") === "x") return true;   // diag bypass
 
   const fromVercelCron = !!req.headers.get("x-vercel-cron");
   if (fromVercelCron) return true;
@@ -57,21 +59,9 @@ export async function GET(req: Request) {
     const dry = url.searchParams.get("dry") === "1";
     const health = url.searchParams.get("health") === "1";
 
-    // --- /api/cron?health=1 : check basique des env
+    // --- /api/cron?health=1 : check basique des env (masquées)
     if (health) {
-      const ok = (v: any) => typeof v === "string" && v.length > 0;
-      return NextResponse.json({
-        ok: true,
-        env: {
-          OPENAI_API_KEY: ok(process.env.OPENAI_API_KEY),
-          X_API_KEY: ok(process.env.X_API_KEY),
-          X_API_KEY_SECRET: ok(process.env.X_API_KEY_SECRET),
-          ACCESS_TOKEN: ok(process.env.ACCESS_TOKEN),
-          ACCESS_TOKEN_SECRET: ok(process.env.ACCESS_TOKEN_SECRET),
-          BEARER_TOKEN: ok(process.env.BEARER_TOKEN),
-          CRON_SECRET: ok(process.env.CRON_SECRET),
-        },
-      });
+      return NextResponse.json({ ok: true, env: maskEnvSummary() });
     }
 
     // --- /api/cron?check=x : sanity-check Twitter (ne publie rien)
@@ -80,7 +70,7 @@ export async function GET(req: Request) {
         const me = await checkXWrite();
         return NextResponse.json({ ok: true, x: me });
       } catch (e: any) {
-        console.error("X check failed:", {
+        log("X check failed", {
           status: e?.status,
           code: e?.code,
           data: e?.data,
@@ -92,6 +82,39 @@ export async function GET(req: Request) {
           { status: 500 }
         );
       }
+    }
+
+    // --- /api/cron?diag=x[&write=1] : diag X (+ tentative d’écriture si write=1 et pas dry)
+    if (url.searchParams.get("diag") === "x") {
+      const info: Record<string, any> = { env: maskEnvSummary() };
+      try {
+        const me = await checkXWrite();
+        info.account = me;
+      } catch (e: any) {
+        info.account_error = {
+          status: e?.status,
+          code: e?.code,
+          message: e?.message,
+          data: e?.data,
+        };
+      }
+      const attemptWrite = url.searchParams.get("write") === "1" && !dry;
+      if (attemptWrite) {
+        try {
+          const id = await postTweet(`diag ${Date.now()} #cryptopilot`);
+          info.write_ok = { id };
+        } catch (e: any) {
+          info.write_error = {
+            status: e?.status,
+            code: e?.code,
+            message: e?.message,
+            data: e?.data,
+            errors: e?.data?.errors,
+          };
+        }
+      }
+      log("X DIAG", info); // visible dans Vercel Logs
+      return NextResponse.json({ ok: true, diag: info, wrote: attemptWrite || false });
     }
 
     const now = nowWithOffset(TZ_OFFSET);
@@ -358,18 +381,18 @@ export async function GET(req: Request) {
       message: "Aucune action prévue cette heure.",
     });
   } catch (err: any) {
-    console.error("Cron error:", err);
+    log("Cron error", { msg: err?.message, status: err?.status, data: err?.data });
 
-    // Aide au diagnostic si l’erreur vient de X (403)
+    // Aide au diagnostic si l’erreur vient de X
     const hostHint =
       err?.host || (err?.message?.includes("twitter") ? "api.x.com" : undefined);
 
-    if (err?.status === 403 || hostHint === "api.x.com") {
+    if (err?.status === 401 || err?.status === 403 || hostHint === "api.x.com") {
       return NextResponse.json(
         {
           ok: false,
           hint:
-            "403 Twitter/X: vérifie que l’app est en Read+Write et que les tokens ont été régénérés. Possibles aussi: endpoint non autorisé par ton plan ou contenu dupliqué.",
+            "Twitter/X: vérifie Read+Write, régénère Access Token/Secret, et assure-toi que Vercel utilise bien les nouveaux secrets. Voir logs [TWITTER] pour le détail.",
           details: err?.data || err?.message,
         },
         { status: 500 }

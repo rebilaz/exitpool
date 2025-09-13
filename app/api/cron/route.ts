@@ -17,12 +17,12 @@ import {
   postImageTweet,
   checkXWrite,
 } from "@/lib/utils/twitter";
-import { ensureUnique } from "@/lib/utils/unique";
 import { sanitizeTweet } from "@/lib/utils/sanitize";
+import { ensureUnique } from "@/lib/utils/unique";
 import { log, maskEnvSummary } from "@/lib/utils/logger";
 
-const TZ_OFFSET = 0; // UTC offset (ex: -3 pour Buenos Aires si tu veux raisonner en local)
-const SIMPLE_SLOTS = [10, 13, 16, 19]; // UTC (tweets simples)
+const TZ_OFFSET = 0; // UTC offset (e.g. -3 for Buenos Aires if you prefer local reasoning)
+const SIMPLE_SLOTS = [10, 13, 16, 19]; // UTC simple tweets
 const THREAD_SLOT = 21; // UTC
 const IMAGE_SLOT = 14; // UTC
 
@@ -38,16 +38,16 @@ function ymd(d: Date) {
 function isAuthorized(req: Request) {
   const url = new URL(req.url);
 
-  // bypass pour diagnostic
+  // bypass for diagnostics
   if (url.searchParams.get("health") === "1") return true;
   if (url.searchParams.get("check") === "x") return true;
   if (url.searchParams.get("diag") === "x") return true;
 
-  // appel automatique Vercel Cron
+  // vercel cron header
   const fromVercelCron = !!req.headers.get("x-vercel-cron");
   if (fromVercelCron) return true;
 
-  // auth bearer optionnelle
+  // optional bearer
   const secret = process.env.CRON_SECRET;
   if (!secret) return true;
   const auth = req.headers.get("authorization");
@@ -64,12 +64,12 @@ export async function GET(req: Request) {
     const dry = url.searchParams.get("dry") === "1";
     const health = url.searchParams.get("health") === "1";
 
-    // /api/cron?health=1 : etat des env (masquees)
+    // /api/cron?health=1
     if (health) {
       return NextResponse.json({ ok: true, env: maskEnvSummary() });
     }
 
-    // /api/cron?check=x : sanity check X (lecture)
+    // /api/cron?check=x
     if (url.searchParams.get("check") === "x") {
       try {
         const me = await checkXWrite();
@@ -89,7 +89,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // /api/cron?diag=x[&write=1] : diag X (+ tentative d ecriture controlee)
+    // /api/cron?diag=x[&write=1]
     if (url.searchParams.get("diag") === "x") {
       const info: Record<string, any> = { env: maskEnvSummary() };
 
@@ -129,13 +129,13 @@ export async function GET(req: Request) {
       });
     }
 
-    // horodatage
+    // clock
     const now = nowWithOffset(TZ_OFFSET);
     const hour = now.getUTCHours();
     const dateKey = ymd(now);
 
     // ========== FORCE MODE ==========
-    // /api/cron?force=tweet|thread|image[&dry=1][&tweak=1][&text=...]
+    // /api/cron?force=tweet|thread|image[&dry=1][&tweak=1][&text=...][&fallback=caption]
     const force = url.searchParams.get("force");
 
     if (force === "tweet") {
@@ -165,7 +165,6 @@ export async function GET(req: Request) {
         });
       }
 
-      // variation optionnelle anti-duplicate demandee
       const tweak = url.searchParams.get("tweak") === "1";
       if (tweak) {
         text = `${text} - ${Math.random().toString(36).slice(2, 6)}`;
@@ -192,7 +191,6 @@ export async function GET(req: Request) {
           text,
         });
       } catch (e: any) {
-        // surface l erreur X pour debug precis
         return NextResponse.json(
           {
             ok: false,
@@ -212,7 +210,16 @@ export async function GET(req: Request) {
     if (force === "thread") {
       const slotKey = `${dateKey}::thread-forced`;
       const plan = await buildThreadPlan(slotKey);
-      const tweets = await realizeThread(plan);
+      let tweets = await realizeThread(plan);
+
+      // sanitize each tweet and drop empties
+      tweets = tweets.map((t) => (t ? sanitizeTweet(t) : "")).filter(Boolean);
+
+      const tweak = url.searchParams.get("tweak") === "1";
+      if (tweak) {
+        tweets = tweets.map((t) => `${t} - ${Math.random().toString(36).slice(2, 6)}`);
+      }
+
       const filtered = tweets.filter((t) => t && ensureUnique(t));
 
       if (filtered.length < 4) {
@@ -257,6 +264,7 @@ export async function GET(req: Request) {
             code: e?.code,
             data: e?.data,
             errors: e?.data?.errors,
+            context: e?.context, // exposes failedIndex and posted if available
           },
           { status: 500 }
         );
@@ -302,14 +310,33 @@ export async function GET(req: Request) {
       try {
         const buf = await generateImageBuffer(imagePrompt);
         const id = await postImageTweet(caption, buf);
-        return NextResponse.json({
-          ok: true,
-          type: "image",
-          forced: true,
-          id,
-          caption,
-        });
+        return NextResponse.json({ ok: true, type: "image", forced: true, id, caption });
       } catch (e: any) {
+        if (e?.message === "IMAGE_MODEL_UNAVAILABLE") {
+          const wantFallback =
+            url.searchParams.get("fallback") === "caption" ||
+            process.env.IMAGE_FALLBACK === "caption";
+          if (wantFallback) {
+            const id = await postTweet(caption);
+            return NextResponse.json({
+              ok: true,
+              type: "image",
+              forced: true,
+              fallback: "caption->tweet",
+              id,
+              caption,
+              detail: (e as any)?.reason,
+            });
+          }
+          return NextResponse.json({
+            ok: true,
+            type: "image",
+            forced: true,
+            skipped: true,
+            reason: "image model unavailable",
+            detail: (e as any)?.reason,
+          });
+        }
         return NextResponse.json(
           {
             ok: false,
@@ -327,7 +354,7 @@ export async function GET(req: Request) {
     }
     // ========== /FORCE MODE ==========
 
-    // fail fast si credentials X manquants (sauf en dry-run)
+    // fail fast when missing Twitter credentials (except in dry run)
     const missingTwitter =
       !process.env.X_API_KEY ||
       !process.env.X_API_KEY_SECRET ||
@@ -345,7 +372,7 @@ export async function GET(req: Request) {
       );
     }
 
-    // ----- tweet simple (slots) -----
+    // slots
     if (SIMPLE_SLOTS.includes(hour)) {
       const slotKey = `${dateKey}::tweet-${hour}`;
       const plan = await buildTweetPlan(slotKey);
@@ -386,11 +413,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, type: "tweet", hour, id, text });
     }
 
-    // ----- thread (slot) -----
     if (hour === THREAD_SLOT) {
       const slotKey = `${dateKey}::thread-${hour}`;
       const plan = await buildThreadPlan(slotKey);
-      const tweets = await realizeThread(plan);
+      let tweets = await realizeThread(plan);
+      tweets = tweets.map((t) => (t ? sanitizeTweet(t) : "")).filter(Boolean);
+
       const filtered = tweets.filter((t) => t && ensureUnique(t));
 
       if (filtered.length < 4) {
@@ -425,7 +453,6 @@ export async function GET(req: Request) {
       });
     }
 
-    // ----- image (slot) -----
     if (hour === IMAGE_SLOT) {
       const slotKey = `${dateKey}::image-${hour}`;
       const plan = await buildImagePlan(slotKey);
@@ -462,21 +489,60 @@ export async function GET(req: Request) {
         });
       }
 
-      const buf = await generateImageBuffer(imagePrompt);
-      const id = await postImageTweet(caption, buf);
-      return NextResponse.json({ ok: true, type: "image", hour, id, caption });
+      try {
+        const buf = await generateImageBuffer(imagePrompt);
+        const id = await postImageTweet(caption, buf);
+        return NextResponse.json({ ok: true, type: "image", hour, id, caption });
+      } catch (e: any) {
+        if (e?.message === "IMAGE_MODEL_UNAVAILABLE") {
+          const wantFallback =
+            url.searchParams.get("fallback") === "caption" ||
+            process.env.IMAGE_FALLBACK === "caption";
+          if (wantFallback) {
+            const id = await postTweet(caption);
+            return NextResponse.json({
+              ok: true,
+              type: "image",
+              hour,
+              fallback: "caption->tweet",
+              id,
+              caption,
+              detail: (e as any)?.reason,
+            });
+          }
+          return NextResponse.json({
+            ok: true,
+            type: "image",
+            hour,
+            skipped: true,
+            reason: "image model unavailable",
+            detail: (e as any)?.reason,
+          });
+        }
+        return NextResponse.json(
+          {
+            ok: false,
+            type: "image",
+            hour,
+            message: e?.message,
+            status: e?.status,
+            code: e?.code,
+            data: e?.data,
+            errors: e?.data?.errors,
+          },
+          { status: 500 }
+        );
+      }
     }
 
-    // rien de prevu a cette heure
     return NextResponse.json({
       ok: true,
       hour,
-      message: "Aucune action prevue cette heure.",
+      message: "No scheduled action at this hour.",
     });
   } catch (err: any) {
     log("Cron error", { msg: err?.message, status: err?.status, data: err?.data });
 
-    // aide au diagnostic si ca vient de X
     const hostHint =
       err?.host || (err?.message?.includes("twitter") ? "api.x.com" : undefined);
 
@@ -485,7 +551,7 @@ export async function GET(req: Request) {
         {
           ok: false,
           hint:
-            "Twitter/X: verifie Read+Write, regenere Access Token/Secret, et assure-toi que Vercel utilise bien les nouveaux secrets. Voir logs [TWITTER] pour le detail.",
+            "Twitter/X: check Read+Write, regenerate Access Token/Secret, and ensure Vercel uses the new secrets. See [TWITTER] logs for details.",
           details: err?.data || err?.message,
         },
         { status: 500 }

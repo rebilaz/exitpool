@@ -13,7 +13,7 @@ async function safeCall<T>(p: Promise<T>, ctx: Record<string, any>) {
       message: e?.message,
       data: e?.data,
       errors: e?.data?.errors,
-      rateLimit: e?.rateLimit, // parfois présent
+      rateLimit: e?.rateLimit,
     });
     throw e;
   }
@@ -29,7 +29,7 @@ function getClient() {
     throw new Error("Twitter credentials missing (X_API_KEY/SECRET, ACCESS_TOKEN/SECRET).");
   }
 
-  // utile pour vérifier que Vercel charge bien les NOUVEAUX jetons
+  // helpful to confirm Vercel uses updated tokens
   log("TWITTER:ENV", {
     appKey_tail: tail(appKey),
     appSecret_tail: tail(appSecret),
@@ -48,17 +48,69 @@ export async function checkXWrite() {
 
 export async function postTweet(text: string) {
   const client = getClient();
-  const r = await safeCall(client.v2.tweet({ text }), { op: "tweet" });
-  return r.data.id;
+  try {
+    const r = await safeCall(client.v2.tweet({ text }), { op: "tweet" });
+    return r.data.id;
+  } catch (e: any) {
+    const first = e?.data?.errors?.[0];
+    const msg = (first?.message || e?.message || "").toLowerCase();
+    const isDuplicate = first?.code === 187 || msg.includes("duplicate");
+    if (isDuplicate && process.env.TWEAK_ON_DUPLICATE === "1") {
+      const tweaked = `${text} - ${Math.random().toString(36).slice(2, 6)}`;
+      const r2 = await safeCall(client.v2.tweet({ text: tweaked }), { op: "tweet_tweaked" });
+      return r2.data.id;
+    }
+    throw e;
+  }
 }
 
 export async function postThread(tweets: string[]) {
   const client = getClient();
-  const r = await safeCall(
-    client.v2.tweetThread(tweets.map((t) => ({ text: t }))),
-    { op: "thread", count: tweets.length }
-  );
-  return r[0].data?.id;
+
+  let firstId: string | undefined;
+  let replyTo: string | undefined;
+  const posted: Array<{ i: number; id: string; tweaked?: boolean }> = [];
+
+  for (let i = 0; i < tweets.length; i++) {
+    const text = tweets[i];
+    try {
+      const r = await safeCall(
+        client.v2.tweet({
+          text,
+          reply: replyTo ? { in_reply_to_tweet_id: replyTo } : undefined,
+        }),
+        { op: "thread_item", idx: i, len: text.length }
+      );
+      const id = r.data.id;
+      if (!firstId) firstId = id;
+      replyTo = id;
+      posted.push({ i, id });
+    } catch (e: any) {
+      const first = e?.data?.errors?.[0];
+      const msg = (first?.message || e?.message || "").toLowerCase();
+      const isDuplicate = first?.code === 187 || msg.includes("duplicate");
+
+      if (isDuplicate && process.env.TWEAK_ON_DUPLICATE === "1") {
+        const tweaked = `${text} - ${Math.random().toString(36).slice(2, 6)}`;
+        const r2 = await safeCall(
+          client.v2.tweet({
+            text: tweaked,
+            reply: replyTo ? { in_reply_to_tweet_id: replyTo } : undefined,
+          }),
+          { op: "thread_item_tweaked", idx: i }
+        );
+        const id2 = r2.data.id;
+        if (!firstId) firstId = id2;
+        replyTo = id2;
+        posted.push({ i, id: id2, tweaked: true });
+        continue;
+      }
+
+      (e as any).context = { failedIndex: i, posted };
+      throw e;
+    }
+  }
+  return firstId!;
 }
 
 export async function postImageTweet(caption: string, imageBuffer: Buffer) {

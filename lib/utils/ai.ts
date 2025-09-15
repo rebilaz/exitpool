@@ -8,6 +8,7 @@ import {
 } from "./prompts";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
 // Allow override if a model isn't enabled
 const CHAT_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
@@ -114,16 +115,48 @@ Return JSON: { "tweets": string[] }`;
 }
 
 // ---------- Image buffer (gpt-image-1) ----------
-export async function generateImageBuffer(imagePrompt: string) {
-  const img = await openai.images.generate({
-    model: "gpt-image-1",
-    prompt: imagePrompt,
-    size: "1024x1024",
-    quality: "high",
-  });
-  const url = img.data?.[0]?.url;
-  if (!img.data || !url) throw new Error("Image URL missing");
-  const res = await fetch(url);
-  const buf = Buffer.from(await res.arrayBuffer());
-  return buf;
+export async function generateImageBuffer(imagePrompt: string): Promise<Buffer> {
+  if (!imagePrompt || !imagePrompt.trim()) {
+    throw new Error("IMAGE_PROMPT_EMPTY");
+  }
+
+  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+
+  try {
+    const res = await openai.images.generate({
+      model,
+      prompt: imagePrompt,
+      size: "1024x1024",
+      // demander du base64 pour éviter le fetch URL
+      response_format: "b64_json",
+    });
+
+    const b64 = res?.data?.[0]?.b64_json;
+    if (b64) {
+      return Buffer.from(b64, "base64");
+    }
+
+    // fallback URL (si jamais le modèle renvoie une URL)
+    const url = res?.data?.[0]?.url;
+    if (url) {
+      const r = await fetch(url);
+      return Buffer.from(await r.arrayBuffer());
+    }
+
+    throw new Error("IMAGE_PAYLOAD_EMPTY");
+  } catch (e: any) {
+    const msg = (e?.message || "").toLowerCase();
+    const code = e?.status || e?.code;
+    const orgBlocked =
+      msg.includes("organization must be verified") ||
+      msg.includes("not permitted") ||
+      code === 403;
+
+    if (orgBlocked) {
+      const err: any = new Error("IMAGE_MODEL_UNAVAILABLE");
+      err.reason = e?.message || "Model not available for this org/project";
+      throw err;
+    }
+    throw e;
+  }
 }

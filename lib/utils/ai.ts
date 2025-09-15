@@ -9,8 +9,10 @@ import {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-// Allow override if a model isn't enabled
+// Allow override if a chat model isn't enabled
 const CHAT_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+// Allow override if an image model isn't enabled
+const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 
 export function makeSeed(slotKey: string) {
   const salt = process.env.RANDOM_SALT || "cryptopilot-salt";
@@ -114,36 +116,39 @@ Return JSON: { "tweets": string[] }`;
   return (out.tweets as string[] | undefined) ?? [];
 }
 
-// ---------- Image buffer (gpt-image-1) ----------
+// ---------- Image buffer (text-to-image using URL -> Buffer) ----------
 export async function generateImageBuffer(imagePrompt: string): Promise<Buffer> {
   if (!imagePrompt || !imagePrompt.trim()) {
     throw new Error("IMAGE_PROMPT_EMPTY");
   }
 
-  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-
   try {
+    // SDK actuel : ne pas utiliser response_format (non supporté ici)
     const res = await openai.images.generate({
-      model,
+      model: IMAGE_MODEL,
       prompt: imagePrompt,
       size: "1024x1024",
-      // demander du base64 pour éviter le fetch URL
-      response_format: "b64_json",
+      // quality peut être ignoré si non supporté par le backend :
+      // quality: "high",
     });
 
-    const b64 = res?.data?.[0]?.b64_json;
-    if (b64) {
-      return Buffer.from(b64, "base64");
-    }
-
-    // fallback URL (si jamais le modèle renvoie une URL)
     const url = res?.data?.[0]?.url;
-    if (url) {
-      const r = await fetch(url);
-      return Buffer.from(await r.arrayBuffer());
+    if (!url) {
+      // certains backends peuvent renvoyer b64_json à l'avenir; on garde le fallback
+      const b64 = (res as any)?.data?.[0]?.b64_json;
+      if (b64) {
+        const bufB64 = Buffer.from(b64, "base64");
+        if (!bufB64.length) throw new Error("IMAGE_DECODE_EMPTY");
+        return bufB64;
+      }
+      throw new Error("IMAGE_URL_EMPTY");
     }
 
-    throw new Error("IMAGE_PAYLOAD_EMPTY");
+    const r = await fetch(url);
+    const ab = await r.arrayBuffer();
+    const buf = Buffer.from(ab);
+    if (!buf.length) throw new Error("IMAGE_FETCH_EMPTY");
+    return buf;
   } catch (e: any) {
     const msg = (e?.message || "").toLowerCase();
     const code = e?.status || e?.code;

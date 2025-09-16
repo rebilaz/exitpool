@@ -1,10 +1,21 @@
-'use client';
+// components/providers/ReownProvider.tsx
+"use client";
 
-import { AppKitProvider } from '@reown/appkit/react';
-// Réseaux dispo dans AppKit (Abstract inclus)
-import { abstract, abstractTestnet, mainnet } from '@reown/appkit/networks';
+import { AppKitProvider } from "@reown/appkit/react";
+// Si AppKit ne fournit pas "base" de base, on peut passer un objet chain compatible viem
+import { base } from "viem/chains"; // sert au metadata si besoin
 
 type Props = { children: React.ReactNode };
+
+// Définition de la chain pour AppKit (format WalletConnect/AppKit)
+const baseChain = {
+  id: 8453,
+  name: "Base",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_RPC_URL || ""] } },
+  blockExplorers: { default: { name: "Basescan", url: "https://basescan.org" } },
+  testnet: false,
+};
 
 export function ReownProvider({ children }: Props) {
   const projectId = process.env.NEXT_PUBLIC_WC_PROJECT_ID!;
@@ -12,14 +23,13 @@ export function ReownProvider({ children }: Props) {
     <AppKitProvider
       projectId={projectId}
       metadata={{
-        name: 'CryptoPilot',
-        description: 'Gérez votre portefeuille crypto avec intelligence',
-        url: typeof window !== 'undefined' ? window.location.origin : 'https://cryptopilot.app',
-        icons: ['https://cryptopilot.app/icon.png'],
+        name: "CryptoPilot",
+        description: "Gérez votre portefeuille crypto avec intelligence",
+        url: typeof window !== "undefined" ? window.location.origin : "https://cryptopilot.app",
+        icons: ["https://cryptopilot.app/icon.png"],
       }}
-      // Choisis les réseaux que tu veux afficher dans le modal
-      networks={[abstract, abstractTestnet, mainnet]}
-      defaultNetwork={abstract}
+      networks={[baseChain]}
+      defaultNetwork={baseChain}
     >
       {children}
     </AppKitProvider>
